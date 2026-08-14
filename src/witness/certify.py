@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from . import value
-from .capsule import Capsule, RaiseOutcome, Refusal, ReturnOutcome
+from . import triage, value
+from .capsule import Capsule, PartialOutcome, RaiseOutcome, Refusal, ReturnOutcome
 from .seams import WitnessReplayError
 
 
@@ -68,15 +68,11 @@ def certify(
     except value.EncodeError as exc:
         return Refusal(qualname, f"recorded dependency response not reproducible: {exc}")
 
-    # 3. Serialize the outcome (only a returned value needs a stored blob).
-    if raised is None:
-        try:
-            result_enc = value.encode(result)
-        except value.EncodeError as exc:
-            return Refusal(qualname, f"return value not reproducible: {exc}")
-
-    # 4. Re-invoke `samples` times; every sample must reproduce the observation.
+    # 3. Re-invoke `samples` times, collecting each outcome. Control-flow divergence
+    #    (an unrecorded seam/dep, or a different count of them) refuses immediately.
     samples = getattr(session, "samples", 1)
+    sample_results: list = []
+    sample_raises: list[BaseException | None] = []
     for _ in range(samples):
         # Fresh inputs each sample, so a function that mutates its args in place
         # doesn't corrupt the next sample.
@@ -115,31 +111,14 @@ def certify(
                 "not reproducible: replay consumed fewer recorded clock/RNG/dependency "
                 "values than were captured — control flow is input/state dependent",
             )
+        sample_results.append(replay_result)
+        sample_raises.append(replay_raised)
 
-        mismatch = _mismatch(qualname, replay_result, replay_raised, result, raised)
-        if mismatch is not None:
-            return mismatch
+    # 4. Decide the outcome from the observation plus every sample.
+    outcome = _decide_outcome(qualname, result, raised, sample_results, sample_raises)
+    if isinstance(outcome, Refusal):
+        return outcome
 
-    # 5. The emitted test compares the live result against a *reconstructed* value,
-    # so certification must prove that exact comparison — not `result == replay` on
-    # two live objects, which can pass via an identity short-circuit (`[nan] == [nan]`,
-    # identity-`__eq__` singletons) yet fail once the test loads a fresh copy.
-    if raised is None and not value.values_equal(value.reconstruct(result_enc), result):
-        return Refusal(
-            qualname,
-            "not assertable: value is not equal to a fresh copy of itself "
-            "(identity-dependent equality, or a non-reflexive value like nan)",
-        )
-
-    # 6. Build the certified capsule.
-    if raised is not None:
-        outcome: RaiseOutcome | ReturnOutcome = RaiseOutcome(
-            # __qualname__ so nested exception classes import correctly.
-            exc_type=type(raised).__qualname__,
-            exc_module=type(raised).__module__,
-        )
-    else:
-        outcome = ReturnOutcome(value=result_enc)
     return Capsule(
         module=module,
         func=qualname,
@@ -151,36 +130,57 @@ def certify(
     )
 
 
-def _mismatch(
+def _decide_outcome(
     qualname: str,
-    replay_result: object,
-    replay_raised: BaseException | None,
     result: object,
     raised: BaseException | None,
-) -> Refusal | None:
-    """Return a Refusal if this replay diverged from the observed outcome, else None."""
-    if raised is not None:
-        if replay_raised is None:
-            return Refusal(
-                qualname,
-                f"not reproducible: observed {type(raised).__name__} but replay returned",
-            )
-        if type(replay_raised) is not type(raised):
-            return Refusal(
-                qualname,
-                f"not reproducible: observed {type(raised).__name__} but replay "
-                f"raised {type(replay_raised).__name__}",
-            )
-        return None
-
-    if replay_raised is not None:
-        return Refusal(
-            qualname,
-            f"not reproducible: replay raised {type(replay_raised).__name__}",
+    sample_results: list,
+    sample_raises: list,
+) -> Capsule | RaiseOutcome | ReturnOutcome | PartialOutcome | Refusal:
+    """Turn the observed outcome + all samples into an outcome, or a Refusal."""
+    if raised is not None or any(rr is not None for rr in sample_raises):
+        # Exception path: the observation and every sample must raise the same type.
+        if raised is None:
+            return Refusal(qualname, "not reproducible: observed a return but replay raised")
+        for rr in sample_raises:
+            if rr is None:
+                return Refusal(
+                    qualname,
+                    f"not reproducible: observed {type(raised).__name__} but replay returned",
+                )
+            if type(rr) is not type(raised):
+                return Refusal(
+                    qualname,
+                    f"not reproducible: observed {type(raised).__name__} but replay "
+                    f"raised {type(rr).__name__}",
+                )
+        return RaiseOutcome(
+            exc_type=type(raised).__qualname__,  # __qualname__ imports nested classes
+            exc_module=type(raised).__module__,
         )
-    if not value.values_equal(replay_result, result):
+
+    # Return path — fully stable across every sample?
+    if all(value.values_equal(r, result) for r in sample_results):
+        try:
+            result_enc = value.encode(result)
+        except value.EncodeError as exc:
+            return Refusal(qualname, f"return value not reproducible: {exc}")
+        # The emitted test compares against a *reconstructed* value, so prove that
+        # exact comparison — `result == replay` on live objects can pass via an
+        # identity short-circuit (`[nan] == [nan]`, identity-`__eq__` singletons).
+        if not value.values_equal(value.reconstruct(result_enc), result):
+            return Refusal(
+                qualname,
+                "not assertable: value is not equal to a fresh copy of itself "
+                "(identity-dependent equality, or a non-reflexive value like nan)",
+            )
+        return ReturnOutcome(value=result_enc)
+
+    # Values differ across samples: certify the stable structure, or refuse.
+    partial = triage.triage_return([result, *sample_results])
+    if partial is None:
         return Refusal(
             qualname,
             "not reproducible: replay output differs (nondeterministic or state-dependent output)",
         )
-    return None
+    return partial

@@ -21,7 +21,7 @@ import base64
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
-from .capsule import Capsule, RaiseOutcome, ReturnOutcome
+from .capsule import Capsule, PartialOutcome, RaiseOutcome, ReturnOutcome
 from .deps import DEP_HARNESS
 from .seams import REPLAY_HARNESS
 from .value import Encoded
@@ -75,11 +75,17 @@ def _dedup(capsules: list[Capsule]) -> list[Capsule]:
     seen: set = set()
     out: list[Capsule] = []
     for c in capsules:
-        outcome_key = (
-            ("return", c.outcome.value.hash)
-            if isinstance(c.outcome, ReturnOutcome)
-            else ("raise", c.outcome.exc_type)
-        )
+        if isinstance(c.outcome, ReturnOutcome):
+            outcome_key: tuple = ("return", c.outcome.value.hash)
+        elif isinstance(c.outcome, PartialOutcome):
+            outcome_key = (
+                "partial",
+                c.outcome.keys,
+                tuple((k, e.hash) for k, e in c.outcome.exact),
+                tuple(c.outcome.types),
+            )
+        else:
+            outcome_key = ("raise", c.outcome.exc_type)
         key = (
             c.module,
             c.func,
@@ -114,6 +120,20 @@ def _render_boundary(boundary: dict[str, list[Encoded]]) -> tuple[str, bool]:
             rendered.append(src)
         parts.append(f"{name!r}: [{', '.join(rendered)}]")
     return "{" + ", ".join(parts) + "}", needs_helper
+
+
+def _render_partial(outcome: PartialOutcome) -> tuple[list[str], bool]:
+    """Render a partial (volatility-triaged) outcome as a list of assert lines."""
+    needs_helper = False
+    keyset = "{" + ", ".join(repr(k) for k in outcome.keys) + "}"
+    lines = [f"assert set(result.keys()) == {keyset}"]
+    for key, enc in outcome.exact:
+        src, helper = _render_value(enc)
+        needs_helper |= helper
+        lines.append(f"assert result[{key!r}] == {src}")
+    for key, type_name in outcome.types:
+        lines.append(f"assert type(result[{key!r}]).__name__ == {type_name!r}")
+    return lines, needs_helper
 
 
 def _render_deps(deps: dict[str, dict[str, list[Encoded]]]) -> tuple[str, bool]:
@@ -184,6 +204,8 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             needs_deps = True
             withs.append(f"_Deps({deps_src})")
 
+        ref: str | None = None
+        asserts: list[str] | None = None
         if isinstance(capsule.outcome, RaiseOutcome):
             ref = _exc_ref(capsule.outcome, module, alias_for)
             if ref is None:
@@ -193,15 +215,17 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
                 )
                 continue
             needs_pytest = True
-            expected = None
+        elif isinstance(capsule.outcome, PartialOutcome):
+            asserts, helper = _render_partial(capsule.outcome)
+            needs_helper |= helper
         else:
             expected, helper = _render_value(capsule.outcome.value)
             needs_helper |= helper
-            ref = None
+            asserts = [f"assert result == {expected}"]
 
         name = f"test_{capsule.func}_{counters[capsule.func]}"
         counters[capsule.func] += 1
-        body.append(_render_test(name, withs, call, ref, expected))
+        body.append(_render_test(name, withs, call, ref, asserts))
 
     if not body:
         return "", 0, skipped
@@ -231,7 +255,9 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
     return source, len(body), skipped
 
 
-def _render_test(name: str, withs: list[str], call: str, ref: str | None, expected) -> str:
+def _render_test(
+    name: str, withs: list[str], call: str, ref: str | None, asserts: list[str] | None
+) -> str:
     """Render one test, nesting any replay context managers around the call."""
     lines = [f"def {name}():"]
     indent = 1
@@ -244,7 +270,7 @@ def _render_test(name: str, withs: list[str], call: str, ref: str | None, expect
         lines.append("    " * indent + call)
     else:
         lines.append("    " * indent + f"result = {call}")
-        lines.append(f"    assert result == {expected}")  # outside the with(s)
+        lines.extend("    " + a for a in asserts or [])  # asserts outside the with(s)
     return "\n".join(lines) + "\n"
 
 

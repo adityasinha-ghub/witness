@@ -28,7 +28,23 @@ class RaiseOutcome:
     exc_module: str
 
 
-Outcome = ReturnOutcome | RaiseOutcome
+@dataclass(frozen=True)
+class PartialOutcome:
+    """The call returned a dict with a stable key set but a partly-volatile value.
+
+    Built by volatility triage from the several sampled returns: ``exact`` fields
+    held the same value in every sample (asserted with ``==``); ``types`` fields
+    varied but kept the same type (asserted by type name); keys with neither are
+    asserted only by their presence in the key set. Every check is grounded in what
+    every sample showed.
+    """
+
+    keys: tuple  # the asserted key set (str/int keys), sorted
+    exact: tuple  # tuple of (key, Encoded) — stable values
+    types: tuple  # tuple of (key, type_name) — volatile but stably-typed values
+
+
+Outcome = ReturnOutcome | RaiseOutcome | PartialOutcome
 
 
 @dataclass(frozen=True)

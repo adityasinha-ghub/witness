@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .capsule import Capsule, RaiseOutcome, Refusal, ReturnOutcome
+from .capsule import Capsule, PartialOutcome, RaiseOutcome, Refusal, ReturnOutcome
 from .value import Encoded
 
 # Bumped to 2 when the dependency-arg key algorithm changed to a canonical form.
@@ -101,6 +101,13 @@ def _capsule_to_json(capsule: Capsule, blobs: Path) -> dict:
     outcome = capsule.outcome
     if isinstance(outcome, ReturnOutcome):
         out["outcome"] = {"kind": "return", "value": _write_encoded(outcome.value, blobs)}
+    elif isinstance(outcome, PartialOutcome):
+        out["outcome"] = {
+            "kind": "partial",
+            "keys": list(outcome.keys),
+            "exact": [[k, _write_encoded(e, blobs)] for k, e in outcome.exact],
+            "types": [[k, t] for k, t in outcome.types],
+        }
     else:
         out["outcome"] = {
             "kind": "raise",
@@ -112,9 +119,15 @@ def _capsule_to_json(capsule: Capsule, blobs: Path) -> dict:
 
 def _capsule_from_json(data: dict, blobs: Path) -> Capsule:
     outcome_data = data["outcome"]
-    if outcome_data["kind"] == "return":
-        outcome: ReturnOutcome | RaiseOutcome = ReturnOutcome(
-            value=_read_encoded(outcome_data["value"], blobs)
+    kind = outcome_data["kind"]
+    outcome: ReturnOutcome | RaiseOutcome | PartialOutcome
+    if kind == "return":
+        outcome = ReturnOutcome(value=_read_encoded(outcome_data["value"], blobs))
+    elif kind == "partial":
+        outcome = PartialOutcome(
+            keys=tuple(outcome_data["keys"]),
+            exact=tuple((k, _read_encoded(e, blobs)) for k, e in outcome_data["exact"]),
+            types=tuple((k, t) for k, t in outcome_data["types"]),
         )
     else:
         outcome = RaiseOutcome(

@@ -99,3 +99,22 @@ _invocations = {"n": 0}
 def const_but_counts():
     _invocations["n"] += 1  # lets a test observe how many times certify re-invoked
     return 42
+
+
+_partial_n = {"i": 0}
+
+
+@witness.record
+def make_response(name):
+    # A dict with stable fields (name, status) and a volatile one (request_id, from
+    # a non-seam counter) — the case volatility triage certifies partially.
+    _partial_n["i"] += 1
+    return {"name": name, "status": "ok", "request_id": _partial_n["i"]}
+
+
+@witness.record
+def response_with_nan(name):
+    # A stable field whose value is non-reflexive ([nan]) — must NOT be asserted
+    # exactly (it wouldn't equal a fresh copy), only by type.
+    _partial_n["i"] += 1
+    return {"name": name, "payload": [math.nan], "req": _partial_n["i"]}

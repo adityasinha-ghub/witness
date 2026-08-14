@@ -20,8 +20,8 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass, field
 
-from . import schema, value
-from .capsule import Capsule, ReturnOutcome
+from . import schema, triage, value
+from .capsule import Capsule, PartialOutcome, ReturnOutcome
 from .deps import DepReplay
 from .generate import _dedup
 from .seams import Replay, WitnessReplayError
@@ -135,6 +135,10 @@ def _reproduces(outcome, current, current_raised) -> bool:
         if current_raised is not None:
             return False
         return value.values_equal(current, value.reconstruct(outcome.value))
+    if isinstance(outcome, PartialOutcome):
+        if current_raised is not None:
+            return False
+        return triage.partial_matches(outcome, current)
     # RaiseOutcome — match pytest.raises semantics: isinstance against the class
     # resolved from the recorded (module, qualname), so a subclass counts as a match
     # and a same-named class in a different module does not.
@@ -159,6 +163,8 @@ def _resolve_exc(module_name: str, qualname: str) -> type | None:
 def _describe_recorded(outcome) -> str:
     if isinstance(outcome, ReturnOutcome):
         return _short(value.reconstruct(outcome.value))
+    if isinstance(outcome, PartialOutcome):
+        return "dict{" + ", ".join(repr(k) for k in outcome.keys) + "}"
     return f"raises {outcome.exc_type}"
 
 

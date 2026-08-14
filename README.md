@@ -173,8 +173,7 @@ pass `seams=[...]` to `recording()` to override, or `seams=[]` to disable.
   **refused** (safe). But a *low-resolution* uncovered source — e.g. `date.today()`
   — can read identically during the immediate re-invoke yet change later, so it can
   slip through and freeze into a test that breaks another day. Prefer `time.time()`
-  over `datetime.now()` for now; broader coverage + volatility triage are on the
-  roadmap.
+  over `datetime.now()` for now; broader seam coverage is on the roadmap.
 
 ## Recording dependencies (network, DB, …)
 
@@ -205,6 +204,33 @@ were never recorded **fails loud** rather than serving the wrong answer. Same
 module-patch caveat as seams (call the dependency through its module); the arguments
 and the response must be picklable, or the call is refused.
 
+## Partly-nondeterministic returns
+
+Sometimes only *part* of a return varies — an API-response dict with a stable
+payload and a volatile `request_id`, say. Rather than refuse the whole call, witness
+certifies the **stable structure**: fields that held across every sample are
+asserted exactly, fields that varied but kept their type are asserted by type, and
+the key set is pinned.
+
+```python
+def make_response(name):
+    return {"name": name, "status": "ok", "request_id": next_id()}  # id varies
+```
+
+```python
+def test_make_response_0():
+    result = _mod.make_response("alice")
+    assert set(result.keys()) == {"name", "request_id", "status"}
+    assert result["name"] == "alice"
+    assert result["status"] == "ok"
+    assert type(result["request_id"]).__name__ == "int"
+```
+
+Every assertion held in *every* sample, so none of it is fiction — and the test
+passes even though `request_id` is different each run. If nothing concrete can be
+pinned (no stable field), the call is still refused. (v0 covers a top-level dict with
+a stable key set; nested structures are future.)
+
 ## What certification does and doesn't guarantee
 
 witness certifies that a call **reproduced across several immediate re-invocations**
@@ -213,8 +239,9 @@ ordinary nondeterminism. It is honest about two things it can't fully catch yet:
 
 - **Uncovered low-cardinality randomness.** A source witness doesn't record (e.g.
   `secrets.randbelow(2)`) can, rarely, re-roll the same value on every sample and be
-  wrongly certified. More `samples` shrinks this fast (a coin flip drops from ~44%
-  at 1 sample to ~1% at 5); covering the source as a seam eliminates it.
+  wrongly certified — as a whole return, or as a single "stable" field in volatility
+  triage. More `samples` shrinks this fast (a coin flip drops from ~44% at 1 sample
+  to ~1% at 5); covering the source as a seam eliminates it.
 - **Per-process cached values.** A value computed once at import (e.g. a module-level
   `uuid4()`) always "reproduces" in-process, so a test can freeze it and then fail
   in a fresh process. Catching this needs subprocess isolation (roadmap).
@@ -272,7 +299,8 @@ for the full vision and build order):
 - [x] **Auto-capture** — instrument whole modules without decorators (`recording(targets=...)`, `witness run`)
 - [x] **Schema fingerprinting** — `witness check` flags type/shape drift (`float` → `int`) the `==` diff can't see
 - [x] **Dependency ledger** — record & replay declared dependency functions by argument (`recording(deps=...)`)
-- [ ] **Volatility triage** — measure per-field determinism; quarantine incidental values behind matchers
+- [x] **Volatility triage** — certify the stable structure of a partly-volatile dict return
+- [ ] Nested volatility triage (lists / nested dicts), filesystem deps, a `sys.monitoring` tracer
 - [ ] **Cross-version replay-diff** — re-feed recordings into new code; "approve these 3 behavior changes" in PR review
 - [ ] **`sys.monitoring` auto-capture** — net a whole module without decorators
 - [ ] Corpus distillation, negative-space coverage map, observed-invariant mining
@@ -281,7 +309,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 67 tests
+python -m pytest -q       # 72 tests
 ```
 
 ## License
