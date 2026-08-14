@@ -9,7 +9,7 @@ import witness
 
 import legacy
 
-for name in ["slugify", "parse_kv", "median", "word_count"]:
+for name in ["slugify", "parse_kv", "median", "word_count", "make_token"]:
     setattr(legacy, name, witness.record(getattr(legacy, name)))
 
 with witness.recording():
@@ -20,6 +20,7 @@ with witness.recording():
     legacy.median([3, 1, 2])
     legacy.median([10, 20, 30, 40])
     legacy.word_count("the quick brown fox")
+    legacy.make_token("alice")  # uses random + clock — recorded and replayed
     try:
         legacy.median([])
     except ValueError:

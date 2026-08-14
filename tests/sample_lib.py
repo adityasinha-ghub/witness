@@ -6,6 +6,8 @@ nondeterministic, and a passthrough for un-reproducible inputs.
 """
 
 import math
+import random
+import time
 
 import witness
 
@@ -64,3 +66,36 @@ _SINGLETON = object()  # identity-based __eq__
 @witness.record
 def get_singleton():
     return _SINGLETON  # equal to itself only by identity — must be refused
+
+
+@witness.record
+def jittered(base):
+    # Reads the RNG through the module — a seam witness records and replays.
+    return base + random.randint(1, 100)
+
+
+@witness.record
+def stamped(label):
+    # Reads the clock through the module — recorded and replayed.
+    return f"{label}@{int(time.time())}"
+
+
+@witness.record
+def inner_seam():
+    random.random()  # draws a seam, but the return doesn't depend on it
+    return 7
+
+
+@witness.record
+def outer_calls_inner():
+    # Deterministic, but calls a seam-using @record function — must still certify.
+    return inner_seam() + 1
+
+
+_invocations = {"n": 0}
+
+
+@witness.record
+def const_but_counts():
+    _invocations["n"] += 1  # lets a test observe how many times certify re-invoked
+    return 42

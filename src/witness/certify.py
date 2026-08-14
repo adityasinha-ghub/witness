@@ -2,19 +2,26 @@
 
 This is the wedge. Before witness will keep a recorded call, it:
 
-1. serializes the entry-snapshot inputs and the outcome (round-trip verified), then
-2. **reconstructs** those inputs from their serialized form, **re-invokes** the
-   real function, and **compares** the replayed outcome to the observed one.
+1. serializes the entry-snapshot inputs, the recorded seam values, and the outcome
+   (round-trip verified), then
+2. **reconstructs** those inputs, **re-invokes** the real function ``samples`` times
+   with the recorded nondeterminism seams *replayed* (not drawn fresh), and checks
+   every re-invocation reproduces the observed outcome — comparing the value against
+   a *fresh reconstruction*, exactly the comparison the emitted test performs.
 
-Only a match yields a :class:`~witness.capsule.Capsule`; anything else is a
-:class:`~witness.capsule.Refusal` with an explained reason. So an emitted test
-passes by construction, or it is never emitted.
+Only if all samples agree does it yield a :class:`~witness.capsule.Capsule`;
+anything else is a :class:`~witness.capsule.Refusal` with an explained reason.
 
-Honest v0 limitation: step 2 re-invokes the function, so a function with side
-effects runs a second time during recording, and a function whose output depends
-on external/mutable state (clock, network, globals) will legitimately fail to
-reproduce and be refused. The hermetic boundary ledger (roadmap) removes this by
-replaying dependencies instead of re-running them.
+What certification can and can't guarantee (honest bounds):
+- It proves the call reproduced across ``samples`` immediate re-invocations with the
+  *recorded* seams replayed. That reliably rejects high-entropy nondeterminism.
+- It cannot see nondeterminism from sources witness doesn't record (see
+  :mod:`witness.seams`) — a *low-cardinality* uncovered source can, rarely, re-roll
+  the same value across all samples and slip through. More ``samples`` shrinks this;
+  covering the source as a seam eliminates it.
+- It re-invokes **in-process**, so a value cached once per process (e.g. a
+  module-level ``uuid4()`` computed at import) always "reproduces" here yet varies
+  between processes. Those remain a documented risk, not a caught one.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ from typing import Callable
 
 from . import value
 from .capsule import Capsule, RaiseOutcome, Refusal, ReturnOutcome
+from .seams import WitnessReplayError
 
 
 def certify(
@@ -33,6 +41,8 @@ def certify(
     kwargs: dict,
     result: object,
     raised: BaseException | None,
+    boundary: dict[str, list],
+    session,
 ) -> Capsule | Refusal:
     """Certify one observed call into a :class:`Capsule`, or refuse it."""
     # 1. Serialize inputs (entry snapshots) with round-trip verification.
@@ -42,24 +52,99 @@ def certify(
     except value.EncodeError as exc:
         return Refusal(qualname, f"inputs not reproducible: {exc}")
 
-    # 2. Serialize the outcome (only a returned value needs a stored blob).
+    # 2. Serialize the recorded seam values.
+    try:
+        boundary_enc = {
+            name: [value.encode(v) for v in vals] for name, vals in boundary.items()
+        }
+    except value.EncodeError as exc:
+        return Refusal(qualname, f"recorded seam value not reproducible: {exc}")
+
+    # 3. Serialize the outcome (only a returned value needs a stored blob).
     if raised is None:
         try:
             result_enc = value.encode(result)
         except value.EncodeError as exc:
             return Refusal(qualname, f"return value not reproducible: {exc}")
 
-    # 3. Reconstruct inputs and re-invoke the real function.
-    replay_args = [value.reconstruct(e) for e in arg_enc]
-    replay_kwargs = {k: value.reconstruct(e) for k, e in kwarg_enc.items()}
-    try:
-        replay_result = func(*replay_args, **replay_kwargs)
-        replay_raised: BaseException | None = None
-    except BaseException as exc:  # noqa: BLE001 - we are characterizing any raise
-        replay_result = None
-        replay_raised = exc
+    # 4. Re-invoke `samples` times; every sample must reproduce the observation.
+    samples = getattr(session, "samples", 1)
+    for _ in range(samples):
+        # Fresh inputs each sample, so a function that mutates its args in place
+        # doesn't corrupt the next sample.
+        replay_args = [value.reconstruct(e) for e in arg_enc]
+        replay_kwargs = {k: value.reconstruct(e) for k, e in kwarg_enc.items()}
+        session._replaying = True
+        session._replay_queues = {name: list(vals) for name, vals in boundary.items()}
+        try:
+            try:
+                replay_result = func(*replay_args, **replay_kwargs)
+                replay_raised: BaseException | None = None
+            except WitnessReplayError:
+                return Refusal(
+                    qualname,
+                    "not reproducible: replay drew more recorded values (clock/RNG) "
+                    "than were captured — control flow is input/state dependent",
+                )
+            except BaseException as exc:  # noqa: BLE001 - characterize any raise
+                replay_result = None
+                replay_raised = exc
+            leftover = any(
+                session._replay_queues.get(n) for n in session._replay_queues
+            )
+        finally:
+            session._replaying = False
+            session._replay_queues = None
 
-    # 4. Compare the replayed outcome to what we observed.
+        if leftover:
+            return Refusal(
+                qualname,
+                "not reproducible: replay consumed fewer recorded values (clock/RNG) "
+                "than were captured — control flow is input/state dependent",
+            )
+
+        mismatch = _mismatch(qualname, replay_result, replay_raised, result, raised)
+        if mismatch is not None:
+            return mismatch
+
+    # 5. The emitted test compares the live result against a *reconstructed* value,
+    # so certification must prove that exact comparison — not `result == replay` on
+    # two live objects, which can pass via an identity short-circuit (`[nan] == [nan]`,
+    # identity-`__eq__` singletons) yet fail once the test loads a fresh copy.
+    if raised is None and not value.values_equal(value.reconstruct(result_enc), result):
+        return Refusal(
+            qualname,
+            "not assertable: value is not equal to a fresh copy of itself "
+            "(identity-dependent equality, or a non-reflexive value like nan)",
+        )
+
+    # 6. Build the certified capsule.
+    if raised is not None:
+        outcome: RaiseOutcome | ReturnOutcome = RaiseOutcome(
+            # __qualname__ so nested exception classes import correctly.
+            exc_type=type(raised).__qualname__,
+            exc_module=type(raised).__module__,
+        )
+    else:
+        outcome = ReturnOutcome(value=result_enc)
+    return Capsule(
+        module=module,
+        func=qualname,
+        args=arg_enc,
+        kwargs=kwarg_enc,
+        outcome=outcome,
+        boundary=boundary_enc,
+    )
+
+
+def _mismatch(
+    qualname: str,
+    replay_result: object,
+    replay_raised: BaseException | None,
+    result: object,
+    raised: BaseException | None,
+) -> Refusal | None:
+    """Return a Refusal if this replay diverged from the observed outcome, else None."""
     if raised is not None:
         if replay_raised is None:
             return Refusal(
@@ -72,19 +157,8 @@ def certify(
                 f"not reproducible: observed {type(raised).__name__} but replay "
                 f"raised {type(replay_raised).__name__}",
             )
-        return Capsule(
-            module=module,
-            func=qualname,
-            args=arg_enc,
-            kwargs=kwarg_enc,
-            outcome=RaiseOutcome(
-                # __qualname__ so nested exception classes import correctly.
-                exc_type=type(raised).__qualname__,
-                exc_module=type(raised).__module__,
-            ),
-        )
+        return None
 
-    # Observed a normal return.
     if replay_raised is not None:
         return Refusal(
             qualname,
@@ -96,21 +170,4 @@ def certify(
             "not reproducible: replay output differs (nondeterministic or "
             "state-dependent output)",
         )
-    # The emitted test compares the live result against a *reconstructed* value, so
-    # certification must prove that exact comparison — not `result == replay_result`
-    # on two live objects, which can pass via an identity short-circuit
-    # (`[nan] == [nan]`, singletons with identity `__eq__`) yet fail once the test
-    # loads a fresh copy. Check what the test will actually check.
-    if not value.values_equal(value.reconstruct(result_enc), result):
-        return Refusal(
-            qualname,
-            "not assertable: value is not equal to a fresh copy of itself "
-            "(identity-dependent equality, or a non-reflexive value like nan)",
-        )
-    return Capsule(
-        module=module,
-        func=qualname,
-        args=arg_enc,
-        kwargs=kwarg_enc,
-        outcome=ReturnOutcome(value=result_enc),
-    )
+    return None

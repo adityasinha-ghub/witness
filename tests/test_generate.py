@@ -49,6 +49,21 @@ def test_dedup_collapses_identical_calls(tmp_path):
     assert result.test_count == 1  # but identical ones collapse to one test
 
 
+def test_seam_replay_harness_emitted(tmp_path):
+    import sample_lib
+
+    wdir = str(tmp_path / ".witness")
+    with witness.recording(wdir):
+        sample_lib.jittered(100)
+    rec = store.load(wdir)
+    result = generate.generate(rec.capsules)
+    src = result.files["test_witness_sample_lib.py"]
+    assert "class _Replay:" in src
+    assert "with _Replay({'random.randint': [" in src
+    assert "result = _mod.jittered(100)" in src
+    compile(src, "test_witness_sample_lib.py", "exec")
+
+
 def test_reserved_name_collision_is_safe(tmp_path):
     import collide_lib
 

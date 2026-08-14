@@ -95,6 +95,62 @@ def test_unpicklable_input_refused(tmp_path):
     assert "not picklable" in rec.refusals[0].reason
 
 
+def test_random_seam_recorded_and_certified(tmp_path):
+    # A function reading the RNG used to be refused; now the drawn value is
+    # recorded and replayed, so it certifies.
+    with witness.recording(str(tmp_path / ".witness")):
+        result = sample_lib.jittered(100)
+    assert 101 <= result <= 200
+    rec = _load(tmp_path)
+    assert rec.refusals == []
+    assert len(rec.capsules) == 1
+    capsule = rec.capsules[0]
+    assert "random.randint" in capsule.boundary
+    assert len(capsule.boundary["random.randint"]) == 1
+
+
+def test_clock_seam_recorded_and_certified(tmp_path):
+    with witness.recording(str(tmp_path / ".witness")):
+        sample_lib.stamped("build")
+    rec = _load(tmp_path)
+    assert rec.refusals == []
+    assert len(rec.capsules) == 1
+    assert "time.time" in rec.capsules[0].boundary
+
+
+def test_nested_record_with_seams_certifies(tmp_path):
+    # A deterministic function that calls a seam-using @record function must not be
+    # wrongly refused (the inner call's draws must not consume the outer's queue).
+    with witness.recording(str(tmp_path / ".witness")):
+        assert sample_lib.outer_calls_inner() == 8
+    rec = _load(tmp_path)
+    certified = {c.func for c in rec.capsules}
+    assert "outer_calls_inner" in certified
+    assert "inner_seam" in certified
+    # outer_calls_inner itself drew no seams
+    outer = next(c for c in rec.capsules if c.func == "outer_calls_inner")
+    assert outer.boundary == {}
+
+
+def test_certification_uses_multiple_samples(tmp_path):
+    sample_lib._invocations["n"] = 0
+    with witness.recording(str(tmp_path / ".witness"), samples=5):
+        sample_lib.const_but_counts()
+    rec = _load(tmp_path)
+    assert len(rec.capsules) == 1
+    # 1 original call + 5 certification re-invocations
+    assert sample_lib._invocations["n"] == 6
+
+
+def test_seams_restored_after_recording(tmp_path):
+    import time as _t
+
+    original = _t.time
+    with witness.recording(str(tmp_path / ".witness")):
+        pass
+    assert _t.time is original  # patches are cleanly removed on exit
+
+
 def test_passthrough_without_active_session():
     # No recording() active — the decorator must not alter behavior.
     assert sample_lib.add(10, 20) == 30

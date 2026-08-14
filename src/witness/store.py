@@ -90,6 +90,10 @@ def _capsule_to_json(capsule: Capsule, blobs: Path) -> dict:
         "func": capsule.func,
         "args": [_write_encoded(e, blobs) for e in capsule.args],
         "kwargs": {k: _write_encoded(e, blobs) for k, e in capsule.kwargs.items()},
+        "boundary": {
+            name: [_write_encoded(e, blobs) for e in vals]
+            for name, vals in capsule.boundary.items()
+        },
     }
     outcome = capsule.outcome
     if isinstance(outcome, ReturnOutcome):
@@ -119,4 +123,8 @@ def _capsule_from_json(data: dict, blobs: Path) -> Capsule:
         args=[_read_encoded(e, blobs) for e in data["args"]],
         kwargs={k: _read_encoded(e, blobs) for k, e in data["kwargs"].items()},
         outcome=outcome,
+        boundary={
+            name: [_read_encoded(e, blobs) for e in vals]
+            for name, vals in data.get("boundary", {}).items()
+        },
     )

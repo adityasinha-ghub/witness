@@ -4,7 +4,14 @@ Note there are no witness imports here: the demo records these functions by
 wrapping them externally, so witness can net code you don't want to edit.
 """
 
+import random
 import re
+import time
+
+
+def make_token(user):
+    # Reads the RNG and the clock — witness records and replays both.
+    return f"{user}-{random.randint(1000, 9999)}-{int(time.time())}"
 
 
 def slugify(title):

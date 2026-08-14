@@ -30,9 +30,11 @@ whole modules, the hermetic boundary ledger (DB/network/clock as auto-mocks),
 volatility triage, cross-version replay-diff, methods/nested functions, other
 languages. Keep the README's "Scope" honest as this moves.
 
-**Honest caveat to hold in the README:** v0 certification *re-invokes* the target
-function, so functions with side effects run twice during recording and are best
-recorded as pure/deterministic until the boundary ledger lands. Say this plainly.
+**Honest caveat to hold in the README:** certification *re-invokes* the target
+function `samples` times (default 5), so side-effecting functions run repeatedly
+during recording. Clock/RNG/uuid seams are recorded & replayed; uncovered
+low-cardinality or per-process-cached nondeterminism can still slip through (see
+README "What certification does and doesn't guarantee"). Say this plainly.
 
 **Stack:** pure Python (>=3.10), stdlib-only core (`copy`, `pickle`, `hashlib`,
 `argparse`); `pytest` for our own tests and the emitted tests. Rust stays a later

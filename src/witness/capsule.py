@@ -8,7 +8,7 @@ reproduced this recorded outcome. A call that could not be certified becomes a
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .value import Encoded
 
@@ -40,6 +40,9 @@ class Capsule:
     args: list[Encoded]
     kwargs: dict[str, Encoded]
     outcome: Outcome
+    # Recorded nondeterminism seam values (dotted name -> values drawn, in order),
+    # replayed on certify and in the generated test so the call is reproducible.
+    boundary: dict[str, list[Encoded]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

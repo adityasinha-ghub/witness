@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from .capsule import Capsule, RaiseOutcome, ReturnOutcome
+from .seams import REPLAY_HARNESS
 from .value import Encoded
 
 _HELPER = (
@@ -101,6 +102,20 @@ def _render_value(enc: Encoded) -> tuple[str, bool]:
     return f'_wv("{b64}")', True
 
 
+def _render_boundary(boundary: dict[str, list[Encoded]]) -> tuple[str, bool]:
+    """Render the recorded seam queues as a dict literal for the _Replay harness."""
+    needs_helper = False
+    parts = []
+    for name, encs in boundary.items():
+        rendered = []
+        for enc in encs:
+            src, helper = _render_value(enc)
+            needs_helper |= helper
+            rendered.append(src)
+        parts.append(f"{name!r}: [{', '.join(rendered)}]")
+    return "{" + ", ".join(parts) + "}", needs_helper
+
+
 def _exc_ref(outcome: RaiseOutcome, module: str, alias_for) -> str | None:
     """A source reference to the exception class, or None if not importable."""
     if outcome.exc_module == "builtins":
@@ -117,6 +132,7 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
     counters: Counter = Counter()
     needs_pytest = False
     needs_helper = False
+    needs_replay = False
     skipped: list[str] = []
     exc_aliases: dict[str, str] = {}
 
@@ -137,6 +153,15 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             call_parts.append(f"{key}={src}")
         call = f"_mod.{capsule.func}({', '.join(call_parts)})"
 
+        # If the call read the clock/RNG/uuid, wrap it so those are replayed.
+        replay_prefix, base_indent = "", "    "
+        if capsule.boundary:
+            queues_src, helper = _render_boundary(capsule.boundary)
+            needs_helper |= helper
+            needs_replay = True
+            replay_prefix = f"    with _Replay({queues_src}):\n"
+            base_indent = "        "
+
         if isinstance(capsule.outcome, RaiseOutcome):
             ref = _exc_ref(capsule.outcome, module, alias_for)
             if ref is None:
@@ -150,8 +175,9 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             counters[capsule.func] += 1
             body.append(
                 f"def {name}():\n"
-                f"    with pytest.raises({ref}):\n"
-                f"        {call}\n"
+                f"{replay_prefix}"
+                f"{base_indent}with pytest.raises({ref}):\n"
+                f"{base_indent}    {call}\n"
             )
         else:
             expected, helper = _render_value(capsule.outcome.value)
@@ -160,7 +186,8 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             counters[capsule.func] += 1
             body.append(
                 f"def {name}():\n"
-                f"    result = {call}\n"
+                f"{replay_prefix}"
+                f"{base_indent}result = {call}\n"
                 f"    assert result == {expected}\n"
             )
 
@@ -183,6 +210,8 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
     blocks = [header, "\n".join(imports)]
     if needs_helper:
         blocks.append(_HELPER.rstrip())
+    if needs_replay:
+        blocks.append(REPLAY_HARNESS.rstrip())
     blocks.extend(b.rstrip() for b in body)
     source = "\n\n\n".join(blocks).rstrip() + "\n"
     return source, len(body), skipped
