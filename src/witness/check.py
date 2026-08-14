@@ -21,7 +21,7 @@ import importlib
 from dataclasses import dataclass, field
 
 from . import value
-from .capsule import Capsule, RaiseOutcome, ReturnOutcome
+from .capsule import Capsule, ReturnOutcome
 from .generate import _dedup
 from .seams import Replay, WitnessReplayError
 
@@ -70,8 +70,7 @@ def _check_one(capsule: Capsule, result: CheckResult) -> None:
         args = [value.reconstruct(e) for e in capsule.args]
         kwargs = {k: value.reconstruct(e) for k, e in capsule.kwargs.items()}
         boundary = {
-            name: [value.reconstruct(e) for e in encs]
-            for name, encs in capsule.boundary.items()
+            name: [value.reconstruct(e) for e in encs] for name, encs in capsule.boundary.items()
         }
         call = _call_repr(capsule)
         before = _describe_recorded(capsule.outcome)
@@ -90,9 +89,8 @@ def _check_one(capsule: Capsule, result: CheckResult) -> None:
             current = func(*args, **kwargs)
             current_raised: BaseException | None = None
         except WitnessReplayError:
-            result.changed.append(
-                Divergence(call, before, "draws more clock/RNG than recorded (control flow changed)")
-            )
+            after = "draws more clock/RNG than recorded (control flow changed)"
+            result.changed.append(Divergence(call, before, after))
             return
         except BaseException as exc:  # noqa: BLE001 - characterize any raise
             current = None

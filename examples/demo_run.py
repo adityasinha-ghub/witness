@@ -5,9 +5,9 @@ legacy.py), runs them on realistic inputs inside `witness.recording()`, and save
 a recording to `.witness/`. Then: `witness generate`.
 """
 
-import witness
-
 import legacy
+
+import witness
 
 for name in ["slugify", "parse_kv", "median", "word_count", "make_token"]:
     setattr(legacy, name, witness.record(getattr(legacy, name)))

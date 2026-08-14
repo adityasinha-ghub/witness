@@ -26,7 +26,7 @@ What certification can and can't guarantee (honest bounds):
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from . import value
 from .capsule import Capsule, RaiseOutcome, Refusal, ReturnOutcome
@@ -54,9 +54,7 @@ def certify(
 
     # 2. Serialize the recorded seam values.
     try:
-        boundary_enc = {
-            name: [value.encode(v) for v in vals] for name, vals in boundary.items()
-        }
+        boundary_enc = {name: [value.encode(v) for v in vals] for name, vals in boundary.items()}
     except value.EncodeError as exc:
         return Refusal(qualname, f"recorded seam value not reproducible: {exc}")
 
@@ -89,9 +87,7 @@ def certify(
             except BaseException as exc:  # noqa: BLE001 - characterize any raise
                 replay_result = None
                 replay_raised = exc
-            leftover = any(
-                session._replay_queues.get(n) for n in session._replay_queues
-            )
+            leftover = any(session._replay_queues.get(n) for n in session._replay_queues)
         finally:
             session._replaying = False
             session._replay_queues = None
@@ -167,7 +163,6 @@ def _mismatch(
     if not value.values_equal(replay_result, result):
         return Refusal(
             qualname,
-            "not reproducible: replay output differs (nondeterministic or "
-            "state-dependent output)",
+            "not reproducible: replay output differs (nondeterministic or state-dependent output)",
         )
     return None

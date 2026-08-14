@@ -31,9 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     c.add_argument("--dir", default=".witness", help="recording directory")
 
-    r = sub.add_parser(
-        "run", help="run a script with witness recording enabled (no code edits)"
-    )
+    r = sub.add_parser("run", help="run a script with witness recording enabled (no code edits)")
     r.add_argument(
         "--target",
         action="append",
@@ -44,9 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--dir", default=".witness", help="recording directory")
     r.add_argument("--samples", type=int, default=None, help="re-invocations per call")
     r.add_argument("script", help="path to the script to run")
-    r.add_argument(
-        "script_args", nargs=argparse.REMAINDER, help="arguments passed to the script"
-    )
+    r.add_argument("script_args", nargs=argparse.REMAINDER, help="arguments passed to the script")
 
     args = parser.parse_args(argv)
     # `run` executes user code, so its exceptions (and the script's own) must surface
@@ -73,10 +69,7 @@ def _generate(recording_dir: str, out_dir: str) -> int:
     if not result.files:
         print("witness: no top-level function calls to generate tests from.")
         if recording.refusals:
-            print(
-                f"  ({len(recording.refusals)} call(s) refused — "
-                f"`witness status` shows why)"
-            )
+            print(f"  ({len(recording.refusals)} call(s) refused — `witness status` shows why)")
         return 0
 
     out = Path(out_dir)
@@ -85,10 +78,7 @@ def _generate(recording_dir: str, out_dir: str) -> int:
         (out / name).write_text(source)
         print(f"  wrote {out / name}")
 
-    print(
-        f"witness: generated {result.test_count} test(s) "
-        f"in {len(result.files)} file(s)."
-    )
+    print(f"witness: generated {result.test_count} test(s) in {len(result.files)} file(s).")
     if result.skipped:
         uniq = sorted(set(result.skipped))
         print(
@@ -127,10 +117,7 @@ def _check(recording_dir: str) -> int:
     recording = store.load(recording_dir)
     result = check_mod.check(recording)
     total = result.unchanged + len(result.changed)
-    print(
-        f"Checking {total} recorded behavior(s) in '{recording_dir}' "
-        f"against the current code:"
-    )
+    print(f"Checking {total} recorded behavior(s) in '{recording_dir}' against the current code:")
     print(f"  ✓ {result.unchanged} unchanged")
     if result.changed:
         print(f"  ✗ {len(result.changed)} changed:")
@@ -190,10 +177,7 @@ def _run(
             file=sys.stderr,
         )
         return 1
-    print(
-        f"witness: recorded to '{recording_dir}' — run `witness generate` "
-        f"or `witness check`."
-    )
+    print(f"witness: recorded to '{recording_dir}' — run `witness generate` or `witness check`.")
     return 0
 
 

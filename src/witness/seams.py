@@ -56,7 +56,7 @@ class Replay:
         self._queues = {name: list(values) for name, values in queues.items()}
         self._saved: list = []
 
-    def __enter__(self) -> "Replay":
+    def __enter__(self) -> Replay:
         try:
             for name, values in self._queues.items():
                 module_name, _, attr = name.rpartition(".")

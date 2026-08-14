@@ -40,9 +40,7 @@ def save(session, path: str = ".witness") -> None:
     manifest = {
         "format_version": FORMAT_VERSION,
         "capsules": [_capsule_to_json(c, blobs) for c in session.capsules],
-        "refusals": [
-            {"qualname": r.qualname, "reason": r.reason} for r in session.refusals
-        ],
+        "refusals": [{"qualname": r.qualname, "reason": r.reason} for r in session.refusals],
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
 

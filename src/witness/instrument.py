@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import importlib
 import types
-from typing import Callable
+from collections.abc import Callable
 
 Undo = list[tuple[object, str, object]]
 

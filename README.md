@@ -1,5 +1,10 @@
 # witness
 
+> **Status: early and experimental (v0.1).** The core is well-tested and its
+> guarantees are honestly bounded (see [What certification does and doesn't
+> guarantee](#what-certification-does-and-doesnt-guarantee)), but expect rough edges
+> and API changes. Python 3.10+.
+
 **Run your program once. Get real tests.**
 
 `witness` watches your code from the inside as it runs, records the **actual
@@ -25,11 +30,13 @@ hallucinates). witness only ever writes down what really happened.
 ```python
 import witness
 
+
 @witness.record
 def slugify(title):
     return title.lower().replace(" ", "-")
 
-with witness.recording():        # records every @record call, saves to .witness/
+
+with witness.recording():  # records every @record call, saves to .witness/
     slugify("Hello World")
     slugify("Rust and Python")
 ```
@@ -49,8 +56,8 @@ The generated file is standalone and passes as-is:
 
 ```python
 def test_slugify_0():
-    result = slugify('Hello World')
-    assert result == 'hello-world'
+    result = slugify("Hello World")
+    assert result == "hello-world"
 ```
 
 You didn't have to invent a single input or expected value — they're the ones your
@@ -137,9 +144,9 @@ becomes a test that passes deterministically, every run, with no seed and no clo
 
 ```python
 def test_make_token_0():
-    with _Replay({'random.randint': [3623], 'time.time': [1786679730.88]}):
-        result = _mod.make_token('alice')
-    assert result == 'alice-3623-1786679730'
+    with _Replay({"random.randint": [3623], "time.time": [1786679730.88]}):
+        result = _mod.make_token("alice")
+    assert result == "alice-3623-1786679730"
 ```
 
 Covered seams are in `witness.seams.DEFAULT_SEAMS` (`time.*`, `random.*`, `uuid.*`);

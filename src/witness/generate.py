@@ -50,8 +50,7 @@ def generate(capsules: list[Capsule]) -> GenerateResult:
     for capsule in _dedup(capsules):
         if capsule.module == "__main__":
             skipped.append(
-                f"{capsule.func} (defined in __main__ — import it as a module "
-                f"to generate tests)"
+                f"{capsule.func} (defined in __main__ — import it as a module to generate tests)"
             )
             continue
         if "." in capsule.func:

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import copy
 import functools
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Callable
 
 from .capsule import Capsule, Refusal
 from .certify import certify
@@ -123,13 +123,9 @@ def record(func: Callable) -> Callable:
             try:
                 result = func(*args, **kwargs)
             except BaseException as exc:  # noqa: BLE001 - characterize any raise
-                session._observe(
-                    func, arg_snapshot, kwarg_snapshot, None, exc, boundary
-                )
+                session._observe(func, arg_snapshot, kwarg_snapshot, None, exc, boundary)
                 raise
-            session._observe(
-                func, arg_snapshot, kwarg_snapshot, result, None, boundary
-            )
+            session._observe(func, arg_snapshot, kwarg_snapshot, result, None, boundary)
             return result
         finally:
             session._call_stack.pop()
@@ -154,9 +150,8 @@ def recording(
     re-invoked to check it reproduces (default :data:`DEFAULT_SAMPLES`). On exit, the
     session's certified capsules and refusals are written to ``path``.
     """
-    from . import instrument
+    from . import instrument, store
     from . import seams as seams_mod
-    from . import store
 
     global _active
     if _active is not None:
