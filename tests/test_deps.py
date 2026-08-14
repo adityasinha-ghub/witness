@@ -91,6 +91,20 @@ def test_unresolvable_dep_name_raises_clearly(tmp_path):
         dep_lib.load_title  # no-op; just proves recording() enters cleanly
 
 
+def test_run_cli_records_deps(tmp_path):
+    from witness import cli
+
+    script = tmp_path / "app.py"
+    script.write_text("import dep_lib\ndep_lib.load_title('http://x')\n")
+    wdir = tmp_path / ".witness"
+    rc = cli.main(
+        ["run", "--target", "dep_lib", "--dep", "dep_lib._fetch", "--dir", str(wdir), str(script)]
+    )
+    assert rc == 0
+    rec = store.load(str(wdir))
+    assert any("dep_lib._fetch" in c.deps for c in rec.capsules)
+
+
 def test_generated_dep_test_is_valid(tmp_path):
     dep_lib._calls["n"] = 0
     wdir = str(tmp_path / ".witness")

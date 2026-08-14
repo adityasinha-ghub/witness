@@ -39,6 +39,7 @@ def wrap_module_functions(module_names: list[str], wrap: Callable) -> Undo:
                     and attr == obj.__name__  # bound under its own name, not an alias
                     and "." not in obj.__qualname__  # top-level (what witness emits)
                     and not hasattr(obj, "__witness_wrapped__")  # not already wrapped
+                    and not hasattr(obj, "__witness_patched__")  # not a seam/dep wrapper
                 ):
                     setattr(module, attr, wrap(obj))
                     undo.append((module, attr, obj))

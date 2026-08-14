@@ -44,6 +44,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="MODULE",
         help="module to auto-instrument (repeatable)",
     )
+    r.add_argument(
+        "--dep",
+        action="append",
+        default=[],
+        metavar="MODULE.FUNC",
+        help="dependency function to record & replay by argument (repeatable)",
+    )
     r.add_argument("--dir", default=".witness", help="recording directory")
     r.add_argument("--samples", type=int, default=None, help="re-invocations per call")
     r.add_argument("script", help="path to the script to run")
@@ -53,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     # `run` executes user code, so its exceptions (and the script's own) must surface
     # normally rather than be caught and relabelled as witness errors.
     if args.command == "run":
-        return _run(args.target, args.script, args.script_args, args.dir, args.samples)
+        return _run(args.target, args.dep, args.script, args.script_args, args.dir, args.samples)
     try:
         if args.command == "generate":
             return _generate(args.dir, args.out)
@@ -146,6 +153,7 @@ def _check(recording_dir: str, strict: bool = False) -> int:
 
 def _run(
     targets: list[str],
+    deps: list[str],
     script: str,
     script_args: list[str],
     recording_dir: str,
@@ -156,10 +164,10 @@ def _run(
 
     from . import recording
 
-    if not targets:
+    if not targets and not deps:
         print(
-            "witness: pass at least one --target MODULE to instrument (nothing to "
-            "record otherwise).",
+            "witness: pass at least one --target MODULE (and/or --dep MODULE.FUNC) — "
+            "nothing to record otherwise.",
             file=sys.stderr,
         )
         return 1
@@ -170,7 +178,7 @@ def _run(
     saved_argv = sys.argv
     sys.argv = [script, *script_args]
     try:
-        with recording(recording_dir, samples=samples, targets=targets) as session:
+        with recording(recording_dir, samples=samples, targets=targets, deps=deps) as session:
             runpy.run_path(script, run_name="__main__")
     except (ImportError, AttributeError, ValueError) as exc:
         print(f"witness: could not instrument a --target/--dep: {exc}", file=sys.stderr)

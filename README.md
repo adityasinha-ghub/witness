@@ -78,12 +78,13 @@ with witness.recording(targets=["mypackage.orders", "mypackage.pricing"]):
 Or capture a script with **zero edits at all** — no witness import anywhere:
 
 ```console
-$ witness run --target mypackage.orders --target mypackage.pricing app.py
+$ witness run --target mypackage.orders --dep mypackage.http.get app.py
 $ witness generate
 ```
 
-`witness run` runs your script normally, instruments the named modules, and saves a
-recording — the fastest way to throw a net over a legacy codebase. See
+`witness run` runs your script normally, instruments the named modules (`--target`)
+and dependency functions (`--dep`, see below), and saves a recording — the fastest
+way to throw a net over a legacy codebase that does I/O. See
 [`examples/app.py`](examples/) for a full undecorated run.
 
 ## Catch behavior changes: `witness check`
@@ -186,6 +187,8 @@ with witness.recording(deps=["myapp.http.get", "myapp.db.query"]):
     run_your_workload()
 ```
 
+…or, with zero edits, `witness run --dep myapp.http.get --dep myapp.db.query app.py`.
+
 Now a function that calls `get("http://a")` certifies, and its generated test
 replays the recorded response for that exact URL — offline, deterministic, no server:
 
@@ -278,7 +281,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 63 tests
+python -m pytest -q       # 67 tests
 ```
 
 ## License

@@ -66,6 +66,7 @@ class Session:
                 return result
             return original(*args, **kwargs)
 
+        wrapped.__witness_patched__ = True  # type: ignore[attr-defined]
         return wrapped
 
     def _dep(self, name: str, original: Callable):
@@ -95,6 +96,7 @@ class Session:
                 return result
             return original(*args, **kwargs)
 
+        wrapped.__witness_patched__ = True  # type: ignore[attr-defined]
         return wrapped
 
     def _observe(
