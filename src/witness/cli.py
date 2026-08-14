@@ -31,7 +31,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     c.add_argument("--dir", default=".witness", help="recording directory")
 
+    r = sub.add_parser(
+        "run", help="run a script with witness recording enabled (no code edits)"
+    )
+    r.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help="module to auto-instrument (repeatable)",
+    )
+    r.add_argument("--dir", default=".witness", help="recording directory")
+    r.add_argument("--samples", type=int, default=None, help="re-invocations per call")
+    r.add_argument("script", help="path to the script to run")
+    r.add_argument(
+        "script_args", nargs=argparse.REMAINDER, help="arguments passed to the script"
+    )
+
     args = parser.parse_args(argv)
+    # `run` executes user code, so its exceptions (and the script's own) must surface
+    # normally rather than be caught and relabelled as witness errors.
+    if args.command == "run":
+        return _run(args.target, args.script, args.script_args, args.dir, args.samples)
     try:
         if args.command == "generate":
             return _generate(args.dir, args.out)
@@ -121,6 +142,59 @@ def _check(recording_dir: str) -> int:
             print(f"      {qualified}: {why}")
     # Exit non-zero when behavior changed, so `witness check` works as a CI gate.
     return 1 if result.changed else 0
+
+
+def _run(
+    targets: list[str],
+    script: str,
+    script_args: list[str],
+    recording_dir: str,
+    samples: int | None,
+) -> int:
+    import runpy
+    import sys
+
+    from . import recording
+
+    if not targets:
+        print(
+            "witness: pass at least one --target MODULE to instrument (nothing to "
+            "record otherwise).",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Make the script's own directory importable, like `python script.py` does.
+    script_dir = str(Path(script).resolve().parent)
+    sys.path.insert(0, script_dir)
+    saved_argv = sys.argv
+    sys.argv = [script, *script_args]
+    try:
+        with recording(recording_dir, samples=samples, targets=targets) as session:
+            runpy.run_path(script, run_name="__main__")
+    except (ImportError, AttributeError) as exc:
+        print(f"witness: could not instrument a --target: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        sys.argv = saved_argv
+        try:
+            sys.path.remove(script_dir)
+        except ValueError:
+            pass
+
+    if not session.capsules and not session.refusals:
+        print(
+            "witness: recorded nothing. Make sure --target names a module your "
+            "script imports and calls through the module (functions defined in the "
+            "script's own __main__ aren't captured).",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"witness: recorded to '{recording_dir}' — run `witness generate` "
+        f"or `witness check`."
+    )
+    return 0
 
 
 if __name__ == "__main__":

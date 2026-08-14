@@ -58,17 +58,26 @@ program really used.
 
 ### Recording code you don't want to edit
 
-You don't have to add decorators to the source. Wrap functions from the outside:
+No decorators required. Point witness at whole modules and it instruments every
+top-level function in them for the duration:
 
 ```python
-import witness, legacy
+import witness
 
-legacy.parse = witness.record(legacy.parse)   # no edit to legacy.py
-with witness.recording():
+with witness.recording(targets=["mypackage.orders", "mypackage.pricing"]):
     run_your_normal_workload()
 ```
 
-See [`examples/`](examples/) for a full run against an untouched `legacy` module.
+Or capture a script with **zero edits at all** — no witness import anywhere:
+
+```console
+$ witness run --target mypackage.orders --target mypackage.pricing app.py
+$ witness generate
+```
+
+`witness run` runs your script normally, instruments the named modules, and saves a
+recording — the fastest way to throw a net over a legacy codebase. See
+[`examples/app.py`](examples/) for a full undecorated run.
 
 ## Catch behavior changes: `witness check`
 
@@ -184,10 +193,11 @@ generated tests once in CI is the final ground truth.
 This is an early, deliberately narrow v0. It does today:
 
 - a `@witness.record` decorator + a `with witness.recording():` context (Python ≥ 3.10);
+- **auto-capture** of whole modules (`recording(targets=...)`) and `witness run` — no decorators;
 - entry-snapshot capture, proof-carrying certification, refusal with reasons;
 - clock/RNG/uuid **seam** recording & replay → hermetic tests (see above);
 - content-addressed recording under `.witness/`;
-- `witness generate` (pytest files) and `witness status`.
+- `witness generate`, `witness status`, and `witness check`.
 
 It does **not** yet do (see [`docs/frontier/witness_wildground.md`](docs/frontier/witness_wildground.md)
 for the full vision and build order):
@@ -199,18 +209,20 @@ for the full vision and build order):
   perturb shared module/global state, affecting what a *later* call records — record
   pure/deterministic-ish functions for now.) Extending the boundary ledger to those
   dependencies (replayed as auto-mocks) is what will remove the double-execution.
-- **Auto-capture** of whole modules via `sys.monitoring` (today you name targets
-  with the decorator).
+- **Auto-capture** covers a module's own top-level functions (called through the
+  module). Methods, nested functions, and functions reached only via a
+  bound-early reference aren't captured yet (a `sys.monitoring`-based tracer would
+  reach those).
 - **Methods, nested functions, lambdas** (top-level functions only for now — others
   are reported as skipped, not mis-emitted).
-- Volatility triage, cross-version replay-diff, property mining, production capture,
-  languages other than Python.
+- Volatility triage, property mining, production capture, languages other than Python.
 
 ## Roadmap
 
 - [x] **The floor** — proof-carrying capture: capture → reconstruct → re-invoke → certify-or-refuse
 - [x] **Boundary ledger (seams)** — record & replay `time`/`random`/`uuid`; hermetic tests for clock/RNG code
 - [x] **Cross-version replay-diff** — `witness check` diffs a recording against the current code (CI gate)
+- [x] **Auto-capture** — instrument whole modules without decorators (`recording(targets=...)`, `witness run`)
 - [ ] **Boundary ledger (dependencies)** — network/DB/filesystem as auto-mocks (kills the double-run)
 - [ ] **Schema fingerprinting** — flag type-level drift (`2.0` → `2`) the `==` diff can't see
 - [ ] **Volatility triage** — measure per-field determinism; quarantine incidental values behind matchers
@@ -222,7 +234,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 41 tests
+python -m pytest -q       # 49 tests
 ```
 
 ## License

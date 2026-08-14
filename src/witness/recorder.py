@@ -143,17 +143,20 @@ def recording(
     path: str = ".witness",
     seams: list[str] | None = None,
     samples: int | None = None,
+    targets: list[str] | None = None,
 ):
-    """Record every ``@record``-decorated call made inside this block.
+    """Record ``@record``-decorated calls made inside this block.
 
-    Nondeterminism seams (``witness.seams.DEFAULT_SEAMS`` by default; pass ``seams``
-    to override, or ``[]`` to disable) are patched for the duration so their values
-    can be replayed. ``samples`` sets how many times each call is re-invoked to check
-    it reproduces (default :data:`DEFAULT_SAMPLES`). On exit, the session's certified
-    capsules and refusals are written to ``path`` (default ``.witness/``).
+    Pass ``targets=["your.module", ...]`` to auto-instrument every top-level function
+    in those modules — no decorators needed (the legacy-code path). Nondeterminism
+    seams (``witness.seams.DEFAULT_SEAMS`` by default; pass ``seams`` to override, or
+    ``[]`` to disable) are replayable. ``samples`` sets how many times each call is
+    re-invoked to check it reproduces (default :data:`DEFAULT_SAMPLES`). On exit, the
+    session's certified capsules and refusals are written to ``path``.
     """
-    from . import store
+    from . import instrument
     from . import seams as seams_mod
+    from . import store
 
     global _active
     if _active is not None:
@@ -163,12 +166,22 @@ def recording(
         session.samples = max(1, samples)
     _active = session
     resolved = seams_mod.resolve_seams(seams)
-    for name, module, attr, original in resolved:
-        setattr(module, attr, session._seam(name, original))
+    seam_saved: list = []
+    undo: list = []
+    setup_ok = False
+    # All global-state setup is inside the try so the finally always restores it —
+    # a target that fails to import must not leave seams patched or _active set.
     try:
+        for name, module, attr, original in resolved:
+            setattr(module, attr, session._seam(name, original))
+            seam_saved.append((module, attr, original))
+        undo = instrument.wrap_module_functions(targets or [], record)
+        setup_ok = True
         yield session
     finally:
-        for name, module, attr, original in resolved:
+        instrument.unwrap(undo)
+        for module, attr, original in reversed(seam_saved):
             setattr(module, attr, original)
         _active = None
-        store.save(session, path)
+        if setup_ok:  # don't overwrite a good recording when setup itself failed
+            store.save(session, path)
