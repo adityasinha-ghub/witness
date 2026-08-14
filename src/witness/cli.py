@@ -172,8 +172,8 @@ def _run(
     try:
         with recording(recording_dir, samples=samples, targets=targets) as session:
             runpy.run_path(script, run_name="__main__")
-    except (ImportError, AttributeError) as exc:
-        print(f"witness: could not instrument a --target: {exc}", file=sys.stderr)
+    except (ImportError, AttributeError, ValueError) as exc:
+        print(f"witness: could not instrument a --target/--dep: {exc}", file=sys.stderr)
         return 1
     finally:
         sys.argv = saved_argv

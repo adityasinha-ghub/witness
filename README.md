@@ -175,6 +175,33 @@ pass `seams=[...]` to `recording()` to override, or `seams=[]` to disable.
   over `datetime.now()` for now; broader coverage + volatility triage are on the
   roadmap.
 
+## Recording dependencies (network, DB, …)
+
+Code that calls out to the world — an HTTP client, a DB helper — is nondeterministic
+and would be refused. Declare those functions as **dependencies** and witness records
+each response *keyed by the call's arguments*, then replays it:
+
+```python
+with witness.recording(deps=["myapp.http.get", "myapp.db.query"]):
+    run_your_workload()
+```
+
+Now a function that calls `get("http://a")` certifies, and its generated test
+replays the recorded response for that exact URL — offline, deterministic, no server:
+
+```python
+def test_load_title_0():
+    with _Deps({"myapp.http.get": {"<arg-hash>": ["<recorded response>"]}}):
+        result = _mod.load_title("http://a")
+    assert result == "HELLO"
+```
+
+Matching is **by argument content, not call order** — `get("http://a")` and
+`get("http://b")` each get their own recorded response — and a call whose arguments
+were never recorded **fails loud** rather than serving the wrong answer. Same
+module-patch caveat as seams (call the dependency through its module); the arguments
+and the response must be picklable, or the call is refused.
+
 ## What certification does and doesn't guarantee
 
 witness certifies that a call **reproduced across several immediate re-invocations**
@@ -241,7 +268,7 @@ for the full vision and build order):
 - [x] **Cross-version replay-diff** — `witness check` diffs a recording against the current code (CI gate)
 - [x] **Auto-capture** — instrument whole modules without decorators (`recording(targets=...)`, `witness run`)
 - [x] **Schema fingerprinting** — `witness check` flags type/shape drift (`float` → `int`) the `==` diff can't see
-- [ ] **Boundary ledger (dependencies)** — network/DB/filesystem as auto-mocks (kills the double-run)
+- [x] **Dependency ledger** — record & replay declared dependency functions by argument (`recording(deps=...)`)
 - [ ] **Volatility triage** — measure per-field determinism; quarantine incidental values behind matchers
 - [ ] **Cross-version replay-diff** — re-feed recordings into new code; "approve these 3 behavior changes" in PR review
 - [ ] **`sys.monitoring` auto-capture** — net a whole module without decorators
@@ -251,7 +278,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 58 tests
+python -m pytest -q       # 63 tests
 ```
 
 ## License

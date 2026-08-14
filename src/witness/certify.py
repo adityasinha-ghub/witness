@@ -42,6 +42,7 @@ def certify(
     result: object,
     raised: BaseException | None,
     boundary: dict[str, list],
+    dep_log: dict[str, dict[str, list]],
     session,
 ) -> Capsule | Refusal:
     """Certify one observed call into a :class:`Capsule`, or refuse it."""
@@ -57,6 +58,15 @@ def certify(
         boundary_enc = {name: [value.encode(v) for v in vals] for name, vals in boundary.items()}
     except value.EncodeError as exc:
         return Refusal(qualname, f"recorded seam value not reproducible: {exc}")
+
+    # 2b. Serialize the recorded dependency responses.
+    try:
+        deps_enc = {
+            name: {key: [value.encode(v) for v in vals] for key, vals in table.items()}
+            for name, table in dep_log.items()
+        }
+    except value.EncodeError as exc:
+        return Refusal(qualname, f"recorded dependency response not reproducible: {exc}")
 
     # 3. Serialize the outcome (only a returned value needs a stored blob).
     if raised is None:
@@ -74,6 +84,10 @@ def certify(
         replay_kwargs = {k: value.reconstruct(e) for k, e in kwarg_enc.items()}
         session._replaying = True
         session._replay_queues = {name: list(vals) for name, vals in boundary.items()}
+        session._replay_deps = {
+            name: {key: list(vals) for key, vals in table.items()}
+            for name, table in dep_log.items()
+        }
         try:
             try:
                 replay_result = func(*replay_args, **replay_kwargs)
@@ -81,22 +95,25 @@ def certify(
             except WitnessReplayError:
                 return Refusal(
                     qualname,
-                    "not reproducible: replay drew more recorded values (clock/RNG) "
-                    "than were captured — control flow is input/state dependent",
+                    "not reproducible: replay reached a clock/RNG/dependency call that "
+                    "wasn't recorded — control flow is input/state dependent",
                 )
             except BaseException as exc:  # noqa: BLE001 - characterize any raise
                 replay_result = None
                 replay_raised = exc
-            leftover = any(session._replay_queues.get(n) for n in session._replay_queues)
+            leftover = any(session._replay_queues.get(n) for n in session._replay_queues) or any(
+                q for table in session._replay_deps.values() for q in table.values()
+            )
         finally:
             session._replaying = False
             session._replay_queues = None
+            session._replay_deps = None
 
         if leftover:
             return Refusal(
                 qualname,
-                "not reproducible: replay consumed fewer recorded values (clock/RNG) "
-                "than were captured — control flow is input/state dependent",
+                "not reproducible: replay consumed fewer recorded clock/RNG/dependency "
+                "values than were captured — control flow is input/state dependent",
             )
 
         mismatch = _mismatch(qualname, replay_result, replay_raised, result, raised)
@@ -130,6 +147,7 @@ def certify(
         kwargs=kwarg_enc,
         outcome=outcome,
         boundary=boundary_enc,
+        deps=deps_enc,
     )
 
 

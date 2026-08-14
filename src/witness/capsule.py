@@ -43,6 +43,9 @@ class Capsule:
     # Recorded nondeterminism seam values (dotted name -> values drawn, in order),
     # replayed on certify and in the generated test so the call is reproducible.
     boundary: dict[str, list[Encoded]] = field(default_factory=dict)
+    # Recorded dependency responses (dotted name -> arg-hash -> returns, in order),
+    # replayed by matching call arguments.
+    deps: dict[str, dict[str, list[Encoded]]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

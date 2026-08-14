@@ -21,7 +21,8 @@ from pathlib import Path
 from .capsule import Capsule, RaiseOutcome, Refusal, ReturnOutcome
 from .value import Encoded
 
-FORMAT_VERSION = 1
+# Bumped to 2 when the dependency-arg key algorithm changed to a canonical form.
+FORMAT_VERSION = 2
 
 
 @dataclass
@@ -92,6 +93,10 @@ def _capsule_to_json(capsule: Capsule, blobs: Path) -> dict:
             name: [_write_encoded(e, blobs) for e in vals]
             for name, vals in capsule.boundary.items()
         },
+        "deps": {
+            name: {key: [_write_encoded(e, blobs) for e in vals] for key, vals in table.items()}
+            for name, table in capsule.deps.items()
+        },
     }
     outcome = capsule.outcome
     if isinstance(outcome, ReturnOutcome):
@@ -124,5 +129,9 @@ def _capsule_from_json(data: dict, blobs: Path) -> Capsule:
         boundary={
             name: [_read_encoded(e, blobs) for e in vals]
             for name, vals in data.get("boundary", {}).items()
+        },
+        deps={
+            name: {key: [_read_encoded(e, blobs) for e in vals] for key, vals in table.items()}
+            for name, table in data.get("deps", {}).items()
         },
     )

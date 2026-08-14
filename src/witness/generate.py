@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from .capsule import Capsule, RaiseOutcome, ReturnOutcome
+from .deps import DEP_HARNESS
 from .seams import REPLAY_HARNESS
 from .value import Encoded
 
@@ -115,6 +116,23 @@ def _render_boundary(boundary: dict[str, list[Encoded]]) -> tuple[str, bool]:
     return "{" + ", ".join(parts) + "}", needs_helper
 
 
+def _render_deps(deps: dict[str, dict[str, list[Encoded]]]) -> tuple[str, bool]:
+    """Render recorded dependency tables (name -> arg-key -> returns) as a literal."""
+    needs_helper = False
+    outer = []
+    for name, table in deps.items():
+        inner = []
+        for key, encs in table.items():
+            vals = []
+            for enc in encs:
+                src, helper = _render_value(enc)
+                needs_helper |= helper
+                vals.append(src)
+            inner.append(f"{key!r}: [{', '.join(vals)}]")
+        outer.append(f"{name!r}: {{{', '.join(inner)}}}")
+    return "{" + ", ".join(outer) + "}", needs_helper
+
+
 def _exc_ref(outcome: RaiseOutcome, module: str, alias_for) -> str | None:
     """A source reference to the exception class, or None if not importable."""
     if outcome.exc_module == "builtins":
@@ -132,6 +150,7 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
     needs_pytest = False
     needs_helper = False
     needs_replay = False
+    needs_deps = False
     skipped: list[str] = []
     exc_aliases: dict[str, str] = {}
 
@@ -152,14 +171,18 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             call_parts.append(f"{key}={src}")
         call = f"_mod.{capsule.func}({', '.join(call_parts)})"
 
-        # If the call read the clock/RNG/uuid, wrap it so those are replayed.
-        replay_prefix, base_indent = "", "    "
+        # Wrap the call in replay context managers for any recorded seams/deps.
+        withs: list[str] = []
         if capsule.boundary:
             queues_src, helper = _render_boundary(capsule.boundary)
             needs_helper |= helper
             needs_replay = True
-            replay_prefix = f"    with _Replay({queues_src}):\n"
-            base_indent = "        "
+            withs.append(f"_Replay({queues_src})")
+        if capsule.deps:
+            deps_src, helper = _render_deps(capsule.deps)
+            needs_helper |= helper
+            needs_deps = True
+            withs.append(f"_Deps({deps_src})")
 
         if isinstance(capsule.outcome, RaiseOutcome):
             ref = _exc_ref(capsule.outcome, module, alias_for)
@@ -170,25 +193,15 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
                 )
                 continue
             needs_pytest = True
-            name = f"test_{capsule.func}_{counters[capsule.func]}"
-            counters[capsule.func] += 1
-            body.append(
-                f"def {name}():\n"
-                f"{replay_prefix}"
-                f"{base_indent}with pytest.raises({ref}):\n"
-                f"{base_indent}    {call}\n"
-            )
+            expected = None
         else:
             expected, helper = _render_value(capsule.outcome.value)
             needs_helper |= helper
-            name = f"test_{capsule.func}_{counters[capsule.func]}"
-            counters[capsule.func] += 1
-            body.append(
-                f"def {name}():\n"
-                f"{replay_prefix}"
-                f"{base_indent}result = {call}\n"
-                f"    assert result == {expected}\n"
-            )
+            ref = None
+
+        name = f"test_{capsule.func}_{counters[capsule.func]}"
+        counters[capsule.func] += 1
+        body.append(_render_test(name, withs, call, ref, expected))
 
     if not body:
         return "", 0, skipped
@@ -211,9 +224,28 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
         blocks.append(_HELPER.rstrip())
     if needs_replay:
         blocks.append(REPLAY_HARNESS.rstrip())
+    if needs_deps:
+        blocks.append(DEP_HARNESS.rstrip())
     blocks.extend(b.rstrip() for b in body)
     source = "\n\n\n".join(blocks).rstrip() + "\n"
     return source, len(body), skipped
+
+
+def _render_test(name: str, withs: list[str], call: str, ref: str | None, expected) -> str:
+    """Render one test, nesting any replay context managers around the call."""
+    lines = [f"def {name}():"]
+    indent = 1
+    for w in withs:
+        lines.append("    " * indent + f"with {w}:")
+        indent += 1
+    if ref is not None:  # exception case
+        lines.append("    " * indent + f"with pytest.raises({ref}):")
+        indent += 1
+        lines.append("    " * indent + call)
+    else:
+        lines.append("    " * indent + f"result = {call}")
+        lines.append(f"    assert result == {expected}")  # outside the with(s)
+    return "\n".join(lines) + "\n"
 
 
 def _filename(module: str) -> str:

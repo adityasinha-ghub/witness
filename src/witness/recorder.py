@@ -39,8 +39,11 @@ class Session:
         # Stack of per-call seam logs (dotted name -> values drawn, in order); the
         # innermost in-flight call is the top of the stack.
         self._call_stack: list[dict[str, list]] = []
-        # Set to a call's seam queues while certification replays it.
+        # Parallel stack of per-call dependency logs (name -> arg-hash -> returns).
+        self._dep_stack: list[dict[str, dict[str, list]]] = []
+        # Set to a call's seam queues / dep tables while certification replays it.
         self._replay_queues: dict[str, list] | None = None
+        self._replay_deps: dict[str, dict[str, list]] | None = None
         self.samples = DEFAULT_SAMPLES
 
     def _refuse(self, qualname: str, reason: str) -> None:
@@ -65,6 +68,35 @@ class Session:
 
         return wrapped
 
+    def _dep(self, name: str, original: Callable):
+        """Wrap a dependency function to replay by args (certify) or log (record)."""
+
+        def wrapped(*args, **kwargs):
+            from . import deps as deps_mod
+            from .seams import WitnessReplayError
+
+            if self._replay_deps is not None:
+                table = self._replay_deps.get(name, {})
+                try:
+                    key = deps_mod.dep_key(args, kwargs)
+                except Exception as exc:  # unkeyable on replay → diverged
+                    raise WitnessReplayError(name) from exc
+                queue = table.get(key)
+                if not queue:
+                    raise WitnessReplayError(name)
+                return queue.pop(0)
+            if not self._replaying and self._dep_stack:
+                result = original(*args, **kwargs)
+                try:
+                    key = deps_mod.dep_key(args, kwargs)
+                except Exception:  # unkeyable args → not stored; replay will refuse
+                    return result
+                self._dep_stack[-1].setdefault(name, {}).setdefault(key, []).append(result)
+                return result
+            return original(*args, **kwargs)
+
+        return wrapped
+
     def _observe(
         self,
         func: Callable,
@@ -73,6 +105,7 @@ class Session:
         result: object,
         raised: BaseException | None,
         boundary: dict[str, list],
+        dep_log: dict[str, dict[str, list]],
     ) -> None:
         outcome = certify(
             func,
@@ -83,6 +116,7 @@ class Session:
             result,
             raised,
             boundary,
+            dep_log,
             self,
         )
         if isinstance(outcome, Refusal):
@@ -101,15 +135,18 @@ def record(func: Callable) -> Callable:
             return func(*args, **kwargs)
         if session._replaying:
             # A nested @record call reached during certification's re-invoke: run it
-            # for real, and suspend the enclosing call's replay queues so this call's
-            # own seam draws aren't served/consumed from them (which would wrongly
+            # for real, and suspend the enclosing call's replay state so this call's
+            # own seam/dep draws aren't served/consumed from them (which would wrongly
             # refuse a deterministic outer function that calls a seam-using inner one).
-            saved = session._replay_queues
+            saved_seams = session._replay_queues
+            saved_deps = session._replay_deps
             session._replay_queues = None
+            session._replay_deps = None
             try:
                 return func(*args, **kwargs)
             finally:
-                session._replay_queues = saved
+                session._replay_queues = saved_seams
+                session._replay_deps = saved_deps
         try:
             arg_snapshot = [copy.deepcopy(a) for a in args]
             kwarg_snapshot = {k: copy.deepcopy(v) for k, v in kwargs.items()}
@@ -118,17 +155,20 @@ def record(func: Callable) -> Callable:
             return func(*args, **kwargs)
 
         boundary: dict[str, list] = {}
+        dep_log: dict[str, dict[str, list]] = {}
         session._call_stack.append(boundary)
+        session._dep_stack.append(dep_log)
         try:
             try:
                 result = func(*args, **kwargs)
             except BaseException as exc:  # noqa: BLE001 - characterize any raise
-                session._observe(func, arg_snapshot, kwarg_snapshot, None, exc, boundary)
+                session._observe(func, arg_snapshot, kwarg_snapshot, None, exc, boundary, dep_log)
                 raise
-            session._observe(func, arg_snapshot, kwarg_snapshot, result, None, boundary)
+            session._observe(func, arg_snapshot, kwarg_snapshot, result, None, boundary, dep_log)
             return result
         finally:
             session._call_stack.pop()
+            session._dep_stack.pop()
 
     wrapper.__witness_wrapped__ = func  # type: ignore[attr-defined]
     return wrapper
@@ -140,16 +180,20 @@ def recording(
     seams: list[str] | None = None,
     samples: int | None = None,
     targets: list[str] | None = None,
+    deps: list[str] | None = None,
 ):
     """Record ``@record``-decorated calls made inside this block.
 
     Pass ``targets=["your.module", ...]`` to auto-instrument every top-level function
-    in those modules — no decorators needed (the legacy-code path). Nondeterminism
-    seams (``witness.seams.DEFAULT_SEAMS`` by default; pass ``seams`` to override, or
-    ``[]`` to disable) are replayable. ``samples`` sets how many times each call is
-    re-invoked to check it reproduces (default :data:`DEFAULT_SAMPLES`). On exit, the
-    session's certified capsules and refusals are written to ``path``.
+    in those modules — no decorators needed (the legacy-code path). Pass
+    ``deps=["httpx.get", ...]`` to record & replay dependency functions by argument
+    (see :mod:`witness.deps`). Nondeterminism seams (``witness.seams.DEFAULT_SEAMS``
+    by default; pass ``seams`` to override, or ``[]`` to disable) are replayable.
+    ``samples`` sets how many times each call is re-invoked to check it reproduces
+    (default :data:`DEFAULT_SAMPLES`). On exit, the session's certified capsules and
+    refusals are written to ``path``.
     """
+    from . import deps as deps_mod
     from . import instrument, store
     from . import seams as seams_mod
 
@@ -160,22 +204,26 @@ def recording(
     if samples is not None:
         session.samples = max(1, samples)
     _active = session
-    resolved = seams_mod.resolve_seams(seams)
-    seam_saved: list = []
+    patched: list = []  # (module, attr, original) to restore, seams and deps alike
     undo: list = []
     setup_ok = False
     # All global-state setup is inside the try so the finally always restores it —
-    # a target that fails to import must not leave seams patched or _active set.
+    # a bad target/dep must not leave anything patched or _active set.
     try:
-        for name, module, attr, original in resolved:
+        resolved_seams = seams_mod.resolve_seams(seams)
+        resolved_deps = deps_mod.resolve_deps(deps)  # raises on an unresolvable dep
+        for name, module, attr, original in resolved_seams:
             setattr(module, attr, session._seam(name, original))
-            seam_saved.append((module, attr, original))
+            patched.append((module, attr, original))
+        for name, module, attr, original in resolved_deps:
+            setattr(module, attr, session._dep(name, original))
+            patched.append((module, attr, original))
         undo = instrument.wrap_module_functions(targets or [], record)
         setup_ok = True
         yield session
     finally:
         instrument.unwrap(undo)
-        for module, attr, original in reversed(seam_saved):
+        for module, attr, original in reversed(patched):
             setattr(module, attr, original)
         _active = None
         if setup_ok:  # don't overwrite a good recording when setup itself failed

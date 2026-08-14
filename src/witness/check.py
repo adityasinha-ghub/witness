@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from . import schema, value
 from .capsule import Capsule, ReturnOutcome
+from .deps import DepReplay
 from .generate import _dedup
 from .seams import Replay, WitnessReplayError
 
@@ -73,6 +74,10 @@ def _check_one(capsule: Capsule, result: CheckResult) -> None:
         boundary = {
             name: [value.reconstruct(e) for e in encs] for name, encs in capsule.boundary.items()
         }
+        dep_tables = {
+            name: {key: [value.reconstruct(e) for e in encs] for key, encs in table.items()}
+            for name, table in capsule.deps.items()
+        }
         call = _call_repr(capsule)
         before = _describe_recorded(capsule.outcome)
     except Exception as exc:  # noqa: BLE001 - any load failure is uncheckable
@@ -82,21 +87,25 @@ def _check_one(capsule: Capsule, result: CheckResult) -> None:
     try:
         replay = Replay(boundary)
         replay.__enter__()
-    except Exception as exc:  # noqa: BLE001 - a seam that won't patch is uncheckable
-        result.uncheckable.append((qualified, f"could not replay recorded seams: {exc!r}"))
+        dep_replay = DepReplay(dep_tables)
+        dep_replay.__enter__()
+    except Exception as exc:  # noqa: BLE001 - a seam/dep that won't patch is uncheckable
+        replay.__exit__(None, None, None)
+        result.uncheckable.append((qualified, f"could not replay recorded seams/deps: {exc!r}"))
         return
     try:
         try:
             current = func(*args, **kwargs)
             current_raised: BaseException | None = None
         except WitnessReplayError:
-            after = "draws more clock/RNG than recorded (control flow changed)"
+            after = "reached an unrecorded clock/RNG/dependency call (control flow changed)"
             result.changed.append(Divergence(call, before, after))
             return
         except BaseException as exc:  # noqa: BLE001 - characterize any raise
             current = None
             current_raised = exc
     finally:
+        dep_replay.__exit__(None, None, None)
         replay.__exit__(None, None, None)
 
     if _reproduces(capsule.outcome, current, current_raised):
