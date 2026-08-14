@@ -118,3 +118,26 @@ def response_with_nan(name):
     # exactly (it wouldn't equal a fresh copy), only by type.
     _partial_n["i"] += 1
     return {"name": name, "payload": [math.nan], "req": _partial_n["i"]}
+
+
+@witness.record
+def nested_response(name):
+    # A nested dict with a volatile field deep inside — exercises recursive triage.
+    _partial_n["i"] += 1
+    return {"user": {"name": name, "session": _partial_n["i"]}, "ok": True}
+
+
+@witness.record
+def pair(name):
+    # A list with a stable element and a volatile one.
+    _partial_n["i"] += 1
+    return [name, _partial_n["i"]]
+
+
+@witness.record
+def cyclic(name):
+    # A self-referential return — triage must not recurse forever.
+    _partial_n["i"] += 1
+    d = {"name": name, "n": _partial_n["i"]}
+    d["self"] = d
+    return d

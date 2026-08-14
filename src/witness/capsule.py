@@ -30,18 +30,12 @@ class RaiseOutcome:
 
 @dataclass(frozen=True)
 class PartialOutcome:
-    """The call returned a dict with a stable key set but a partly-volatile value.
+    """The call returned a partly-volatile value; ``matcher`` (a recursive
+    :mod:`~witness.matcher`) describes the structure that held in every sample —
+    stable values asserted exactly, volatile-but-typed values by type, dicts/lists
+    by shape. Built by volatility triage; every node is grounded in what was seen."""
 
-    Built by volatility triage from the several sampled returns: ``exact`` fields
-    held the same value in every sample (asserted with ``==``); ``types`` fields
-    varied but kept the same type (asserted by type name); keys with neither are
-    asserted only by their presence in the key set. Every check is grounded in what
-    every sample showed.
-    """
-
-    keys: tuple  # the asserted key set (str/int keys), sorted
-    exact: tuple  # tuple of (key, Encoded) — stable values
-    types: tuple  # tuple of (key, type_name) — volatile but stably-typed values
+    matcher: object  # a witness.matcher.Matcher tree
 
 
 Outcome = ReturnOutcome | RaiseOutcome | PartialOutcome

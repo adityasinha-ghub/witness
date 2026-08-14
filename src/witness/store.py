@@ -18,6 +18,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import matcher as matcher_mod
 from .capsule import Capsule, PartialOutcome, RaiseOutcome, Refusal, ReturnOutcome
 from .value import Encoded
 
@@ -104,9 +105,7 @@ def _capsule_to_json(capsule: Capsule, blobs: Path) -> dict:
     elif isinstance(outcome, PartialOutcome):
         out["outcome"] = {
             "kind": "partial",
-            "keys": list(outcome.keys),
-            "exact": [[k, _write_encoded(e, blobs)] for k, e in outcome.exact],
-            "types": [[k, t] for k, t in outcome.types],
+            "matcher": matcher_mod.to_json(outcome.matcher, lambda e: _write_encoded(e, blobs)),
         }
     else:
         out["outcome"] = {
@@ -125,9 +124,9 @@ def _capsule_from_json(data: dict, blobs: Path) -> Capsule:
         outcome = ReturnOutcome(value=_read_encoded(outcome_data["value"], blobs))
     elif kind == "partial":
         outcome = PartialOutcome(
-            keys=tuple(outcome_data["keys"]),
-            exact=tuple((k, _read_encoded(e, blobs)) for k, e in outcome_data["exact"]),
-            types=tuple((k, t) for k, t in outcome_data["types"]),
+            matcher=matcher_mod.from_json(
+                outcome_data["matcher"], lambda ed: _read_encoded(ed, blobs)
+            )
         )
     else:
         outcome = RaiseOutcome(

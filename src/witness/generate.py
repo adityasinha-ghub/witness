@@ -21,8 +21,10 @@ import base64
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
+from . import matcher as matcher_mod
 from .capsule import Capsule, PartialOutcome, RaiseOutcome, ReturnOutcome
 from .deps import DEP_HARNESS
+from .matcher import Anything, DictMatch, Exact, OfType
 from .seams import REPLAY_HARNESS
 from .value import Encoded
 
@@ -78,12 +80,7 @@ def _dedup(capsules: list[Capsule]) -> list[Capsule]:
         if isinstance(c.outcome, ReturnOutcome):
             outcome_key: tuple = ("return", c.outcome.value.hash)
         elif isinstance(c.outcome, PartialOutcome):
-            outcome_key = (
-                "partial",
-                c.outcome.keys,
-                tuple((k, e.hash) for k, e in c.outcome.exact),
-                tuple(c.outcome.types),
-            )
+            outcome_key = ("partial", matcher_mod.signature(c.outcome.matcher))
         else:
             outcome_key = ("raise", c.outcome.exc_type)
         key = (
@@ -122,17 +119,32 @@ def _render_boundary(boundary: dict[str, list[Encoded]]) -> tuple[str, bool]:
     return "{" + ", ".join(parts) + "}", needs_helper
 
 
-def _render_partial(outcome: PartialOutcome) -> tuple[list[str], bool]:
-    """Render a partial (volatility-triaged) outcome as a list of assert lines."""
+def _render_matcher(m, accessor: str) -> tuple[list[str], bool]:
+    """Render a matcher as assert lines over ``accessor`` (recursive)."""
+    if isinstance(m, Anything):
+        return [], False
+    if isinstance(m, Exact):
+        src, helper = _render_value(m.value)
+        return [f"assert {accessor} == {src}"], helper
+    if isinstance(m, OfType):
+        return [f"assert type({accessor}).__name__ == {m.type_name!r}"], False
+
     needs_helper = False
-    keyset = "{" + ", ".join(repr(k) for k in outcome.keys) + "}"
-    lines = [f"assert set(result.keys()) == {keyset}"]
-    for key, enc in outcome.exact:
-        src, helper = _render_value(enc)
-        needs_helper |= helper
-        lines.append(f"assert result[{key!r}] == {src}")
-    for key, type_name in outcome.types:
-        lines.append(f"assert type(result[{key!r}]).__name__ == {type_name!r}")
+    lines: list[str] = []
+    if isinstance(m, DictMatch):
+        keyset = "{" + ", ".join(repr(k) for k in m.keys) + "}" if m.keys else "set()"
+        lines.append(f"assert set({accessor}.keys()) == {keyset}")
+        for key, sub in m.fields:
+            sub_lines, helper = _render_matcher(sub, f"{accessor}[{key!r}]")
+            needs_helper |= helper
+            lines.extend(sub_lines)
+    else:  # SeqMatch
+        lines.append(f"assert isinstance({accessor}, {m.kind})")
+        lines.append(f"assert len({accessor}) == {len(m.items)}")
+        for i, sub in enumerate(m.items):
+            sub_lines, helper = _render_matcher(sub, f"{accessor}[{i}]")
+            needs_helper |= helper
+            lines.extend(sub_lines)
     return lines, needs_helper
 
 
@@ -216,7 +228,7 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
                 continue
             needs_pytest = True
         elif isinstance(capsule.outcome, PartialOutcome):
-            asserts, helper = _render_partial(capsule.outcome)
+            asserts, helper = _render_matcher(capsule.outcome.matcher, "result")
             needs_helper |= helper
         else:
             expected, helper = _render_value(capsule.outcome.value)

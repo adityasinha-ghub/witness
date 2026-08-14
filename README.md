@@ -227,9 +227,10 @@ def test_make_response_0():
 ```
 
 Every assertion held in *every* sample, so none of it is fiction — and the test
-passes even though `request_id` is different each run. If nothing concrete can be
-pinned (no stable field), the call is still refused. (v0 covers a top-level dict with
-a stable key set; nested structures are future.)
+passes even though `request_id` is different each run. It works **recursively** —
+nested dicts and lists are triaged the same way (`result['user']['name'] == 'alice'`,
+`type(result['user']['session']).__name__ == 'int'`). If nothing concrete can be
+pinned (no stable value anywhere), the call is still refused.
 
 ## What certification does and doesn't guarantee
 
@@ -299,8 +300,8 @@ for the full vision and build order):
 - [x] **Auto-capture** — instrument whole modules without decorators (`recording(targets=...)`, `witness run`)
 - [x] **Schema fingerprinting** — `witness check` flags type/shape drift (`float` → `int`) the `==` diff can't see
 - [x] **Dependency ledger** — record & replay declared dependency functions by argument (`recording(deps=...)`)
-- [x] **Volatility triage** — certify the stable structure of a partly-volatile dict return
-- [ ] Nested volatility triage (lists / nested dicts), filesystem deps, a `sys.monitoring` tracer
+- [x] **Volatility triage** — certify the stable structure of a partly-volatile return (recursive: nested dicts + lists)
+- [ ] Filesystem deps, a `sys.monitoring` tracer for methods + locally-bound calls
 - [ ] **Cross-version replay-diff** — re-feed recordings into new code; "approve these 3 behavior changes" in PR review
 - [ ] **`sys.monitoring` auto-capture** — net a whole module without decorators
 - [ ] Corpus distillation, negative-space coverage map, observed-invariant mining
@@ -309,7 +310,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 72 tests
+python -m pytest -q       # 76 tests
 ```
 
 ## License
