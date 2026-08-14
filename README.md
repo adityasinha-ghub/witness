@@ -70,6 +70,31 @@ with witness.recording():
 
 See [`examples/`](examples/) for a full run against an untouched `legacy` module.
 
+## Catch behavior changes: `witness check`
+
+A recording isn't just a source of tests — it's a **regression oracle**. `witness
+check` re-feeds every recorded call into your *current* code (replaying the recorded
+clock/RNG so the comparison is fair) and reports which behaviors changed:
+
+```console
+$ witness check
+Checking 9 recorded behavior(s) in '.witness' against the current code:
+  ✓ 7 unchanged
+  ✗ 2 changed:
+      slugify('Hello, World!'):  'hello-world'  →  'hello_world_'
+      slugify('  Rust & Python: 2026  '):  'rust-python-2026'  →  '_rust_python_2026_'
+```
+
+Neither side is labelled "correct" — it shows you *what moved* so you can bless it
+(re-record) or fix it. It **exits non-zero when anything changed**, so it drops
+straight into CI as a behavioral guard, no generated files required. This is the
+same reframing behind "approve these 3 behavior changes" in review.
+
+The diff uses the same `==` your generated tests use, so it agrees with them: a
+change that `==` can't see (e.g. a return type flipping `2.0` → `2`) reads as
+*unchanged*, because the test wouldn't break either. Type-level drift detection is a
+roadmap item (schema fingerprinting).
+
 ## What "refused" means (and why it's the point)
 
 witness would rather write nothing than write a lie. If a function is
@@ -185,7 +210,9 @@ for the full vision and build order):
 
 - [x] **The floor** — proof-carrying capture: capture → reconstruct → re-invoke → certify-or-refuse
 - [x] **Boundary ledger (seams)** — record & replay `time`/`random`/`uuid`; hermetic tests for clock/RNG code
+- [x] **Cross-version replay-diff** — `witness check` diffs a recording against the current code (CI gate)
 - [ ] **Boundary ledger (dependencies)** — network/DB/filesystem as auto-mocks (kills the double-run)
+- [ ] **Schema fingerprinting** — flag type-level drift (`2.0` → `2`) the `==` diff can't see
 - [ ] **Volatility triage** — measure per-field determinism; quarantine incidental values behind matchers
 - [ ] **Cross-version replay-diff** — re-feed recordings into new code; "approve these 3 behavior changes" in PR review
 - [ ] **`sys.monitoring` auto-capture** — net a whole module without decorators
@@ -195,7 +222,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 36 tests
+python -m pytest -q       # 41 tests
 ```
 
 ## License

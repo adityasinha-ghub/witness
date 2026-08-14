@@ -7,6 +7,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from . import check as check_mod
 from . import generate as gen
 from . import store
 
@@ -25,12 +26,19 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status", help="show what was certified and what was refused")
     s.add_argument("--dir", default=".witness", help="recording directory")
 
+    c = sub.add_parser(
+        "check", help="diff a recording against the current code (exits 1 on changes)"
+    )
+    c.add_argument("--dir", default=".witness", help="recording directory")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "generate":
             return _generate(args.dir, args.out)
         if args.command == "status":
             return _status(args.dir)
+        if args.command == "check":
+            return _check(args.dir)
     except (FileNotFoundError, ValueError) as exc:
         print(f"witness: {exc}", file=sys.stderr)
         return 1
@@ -92,6 +100,27 @@ def _status(recording_dir: str) -> int:
             suffix = f" (x{count})" if count > 1 else ""
             print(f"  {qualname}: {reason}{suffix}")
     return 0
+
+
+def _check(recording_dir: str) -> int:
+    recording = store.load(recording_dir)
+    result = check_mod.check(recording)
+    total = result.unchanged + len(result.changed)
+    print(
+        f"Checking {total} recorded behavior(s) in '{recording_dir}' "
+        f"against the current code:"
+    )
+    print(f"  ✓ {result.unchanged} unchanged")
+    if result.changed:
+        print(f"  ✗ {len(result.changed)} changed:")
+        for d in result.changed:
+            print(f"      {d.call}:  {d.before}  →  {d.after}")
+    if result.uncheckable:
+        print(f"  ⚠ {len(result.uncheckable)} could not be checked:")
+        for qualified, why in result.uncheckable:
+            print(f"      {qualified}: {why}")
+    # Exit non-zero when behavior changed, so `witness check` works as a CI gate.
+    return 1 if result.changed else 0
 
 
 if __name__ == "__main__":
