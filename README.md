@@ -106,10 +106,20 @@ Neither side is labelled "correct" — it shows you *what moved* so you can bles
 straight into CI as a behavioral guard, no generated files required. This is the
 same reframing behind "approve these 3 behavior changes" in review.
 
-The diff uses the same `==` your generated tests use, so it agrees with them: a
-change that `==` can't see (e.g. a return type flipping `2.0` → `2`) reads as
-*unchanged*, because the test wouldn't break either. Type-level drift detection is a
-roadmap item (schema fingerprinting).
+The diff uses the same `==` your generated tests use, so it agrees with them. A
+change `==` can't see — a return type flipping `float` → `int`, `[1, 2]` gaining a
+float, a dict value changing type — is reported separately as **drift** (same value,
+different shape):
+
+```console
+$ witness check
+  ✓ 8 unchanged
+  ⧗ 1 drifted — same value, different type/shape (tests still pass; use --strict to fail on these):
+      median([3, 1, 2]):  float  →  int
+```
+
+Drift doesn't fail the gate by default (the `==` tests still pass, so calling it a
+failure would contradict them); pass `--strict` to treat drift as a failure too.
 
 ## What "refused" means (and why it's the point)
 
@@ -230,8 +240,8 @@ for the full vision and build order):
 - [x] **Boundary ledger (seams)** — record & replay `time`/`random`/`uuid`; hermetic tests for clock/RNG code
 - [x] **Cross-version replay-diff** — `witness check` diffs a recording against the current code (CI gate)
 - [x] **Auto-capture** — instrument whole modules without decorators (`recording(targets=...)`, `witness run`)
+- [x] **Schema fingerprinting** — `witness check` flags type/shape drift (`float` → `int`) the `==` diff can't see
 - [ ] **Boundary ledger (dependencies)** — network/DB/filesystem as auto-mocks (kills the double-run)
-- [ ] **Schema fingerprinting** — flag type-level drift (`2.0` → `2`) the `==` diff can't see
 - [ ] **Volatility triage** — measure per-field determinism; quarantine incidental values behind matchers
 - [ ] **Cross-version replay-diff** — re-feed recordings into new code; "approve these 3 behavior changes" in PR review
 - [ ] **`sys.monitoring` auto-capture** — net a whole module without decorators
@@ -241,7 +251,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 49 tests
+python -m pytest -q       # 58 tests
 ```
 
 ## License

@@ -20,7 +20,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass, field
 
-from . import value
+from . import schema, value
 from .capsule import Capsule, ReturnOutcome
 from .generate import _dedup
 from .seams import Replay, WitnessReplayError
@@ -39,6 +39,7 @@ class Divergence:
 class CheckResult:
     unchanged: int = 0
     changed: list[Divergence] = field(default_factory=list)
+    drifted: list[Divergence] = field(default_factory=list)  # same value, different shape
     uncheckable: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -99,9 +100,25 @@ def _check_one(capsule: Capsule, result: CheckResult) -> None:
         replay.__exit__(None, None, None)
 
     if _reproduces(capsule.outcome, current, current_raised):
-        result.unchanged += 1
+        drift = _drift(capsule.outcome, current, current_raised)
+        if drift is not None:
+            result.drifted.append(Divergence(call, drift[0], drift[1]))
+        else:
+            result.unchanged += 1
     else:
         result.changed.append(Divergence(call, before, _describe_current(current, current_raised)))
+
+
+def _drift(outcome, current, current_raised) -> tuple[str, str] | None:
+    """For an equal return value, (recorded_shape, current_shape) if they differ."""
+    if not isinstance(outcome, ReturnOutcome) or current_raised is not None:
+        return None
+    try:
+        recorded_shape = schema.fingerprint(value.reconstruct(outcome.value))
+        current_shape = schema.fingerprint(current)
+    except Exception:  # noqa: BLE001 - fingerprinting must never break the diff
+        return None
+    return (recorded_shape, current_shape) if recorded_shape != current_shape else None
 
 
 def _reproduces(outcome, current, current_raised) -> bool:

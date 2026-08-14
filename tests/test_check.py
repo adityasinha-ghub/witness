@@ -117,6 +117,39 @@ def test_short_survives_broken_repr():
     assert check._short(Bad()) == "<unrepresentable>"
 
 
+def test_type_drift_is_reported_separately_not_as_changed(tmp_path, monkeypatch):
+    # 5 -> 5.0 is == equal, so it's not "changed" (the test would still pass), but
+    # it IS a type drift worth surfacing.
+    rec = _record_add(tmp_path)  # add(2, 3) == 5 (int)
+    monkeypatch.setattr(sample_lib, "add", lambda a, b: float(a + b))
+    result = check.check(rec)
+    assert result.unchanged == 0
+    assert result.changed == []
+    assert len(result.drifted) == 1
+    assert "int" in result.drifted[0].before
+    assert "float" in result.drifted[0].after
+
+
+def test_no_drift_reported_for_unchanged_code(tmp_path):
+    rec = _record_add(tmp_path)
+    result = check.check(rec)
+    assert result.drifted == []
+    assert result.unchanged == 1
+
+
+def test_bool_vs_int_is_drift(tmp_path, monkeypatch):
+    wdir = str(tmp_path / ".witness")
+    with witness.recording(wdir):
+        assert sample_lib.identity(True) is True  # records a bool
+    # current returns 1, which == True but is a different type
+    monkeypatch.setattr(sample_lib, "identity", lambda x: 1)
+    result = check.check(store.load(wdir))
+    assert result.changed == []
+    assert len(result.drifted) == 1
+    assert result.drifted[0].before == "bool"
+    assert result.drifted[0].after == "int"
+
+
 def test_seams_replayed_so_clock_code_is_stable(tmp_path):
     # A clock-reading function must compare as UNCHANGED when re-checked, because
     # the recorded time is replayed rather than read fresh.

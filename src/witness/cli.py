@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
         "check", help="diff a recording against the current code (exits 1 on changes)"
     )
     c.add_argument("--dir", default=".witness", help="recording directory")
+    c.add_argument(
+        "--strict",
+        action="store_true",
+        help="also fail (exit 1) on type/shape drift, not just value changes",
+    )
 
     r = sub.add_parser("run", help="run a script with witness recording enabled (no code edits)")
     r.add_argument(
@@ -55,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             return _status(args.dir)
         if args.command == "check":
-            return _check(args.dir)
+            return _check(args.dir, args.strict)
     except (FileNotFoundError, ValueError) as exc:
         print(f"witness: {exc}", file=sys.stderr)
         return 1
@@ -113,22 +118,30 @@ def _status(recording_dir: str) -> int:
     return 0
 
 
-def _check(recording_dir: str) -> int:
+def _check(recording_dir: str, strict: bool = False) -> int:
     recording = store.load(recording_dir)
     result = check_mod.check(recording)
-    total = result.unchanged + len(result.changed)
+    total = result.unchanged + len(result.changed) + len(result.drifted)
     print(f"Checking {total} recorded behavior(s) in '{recording_dir}' against the current code:")
     print(f"  ✓ {result.unchanged} unchanged")
     if result.changed:
         print(f"  ✗ {len(result.changed)} changed:")
         for d in result.changed:
             print(f"      {d.call}:  {d.before}  →  {d.after}")
+    if result.drifted:
+        note = "" if strict else " (tests still pass; use --strict to fail on these)"
+        print(f"  ⧗ {len(result.drifted)} drifted — same value, different type/shape{note}:")
+        for d in result.drifted:
+            print(f"      {d.call}:  {d.before}  →  {d.after}")
     if result.uncheckable:
         print(f"  ⚠ {len(result.uncheckable)} could not be checked:")
         for qualified, why in result.uncheckable:
             print(f"      {qualified}: {why}")
-    # Exit non-zero when behavior changed, so `witness check` works as a CI gate.
-    return 1 if result.changed else 0
+    # Exit non-zero when behavior changed (and, with --strict, on drift too), so
+    # `witness check` works as a CI gate. Drift alone is consistent with `==`, so by
+    # default it's informational and doesn't fail.
+    failed = bool(result.changed) or (strict and bool(result.drifted))
+    return 1 if failed else 0
 
 
 def _run(
