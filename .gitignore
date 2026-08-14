@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# witness's own recordings (the .witness dir is a scratch/cache, not source)
+.witness/
+
+# generated demo output
+examples/gen_tests/
+
+# OS
+.DS_Store
