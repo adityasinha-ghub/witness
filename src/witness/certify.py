@@ -154,10 +154,14 @@ def _decide_outcome(
                     f"not reproducible: observed {type(raised).__name__} but replay "
                     f"raised {type(rr).__name__}",
                 )
-        return RaiseOutcome(
-            exc_type=type(raised).__qualname__,  # __qualname__ imports nested classes
-            exc_module=type(raised).__module__,
-        )
+        exc_qualname = type(raised).__qualname__  # imports Outer.Inner nesting…
+        if "<locals>" in exc_qualname:  # …but not a function-local class — can't reference it
+            return Refusal(
+                qualname,
+                f"exception type {type(raised).__name__} is defined in a local scope "
+                f"(<locals>) and can't be referenced portably",
+            )
+        return RaiseOutcome(exc_type=exc_qualname, exc_module=type(raised).__module__)
 
     # Return path — fully stable across every sample?
     if all(value.values_equal(r, result) for r in sample_results):

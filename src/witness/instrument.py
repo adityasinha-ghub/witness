@@ -26,8 +26,9 @@ def wrap_module_functions(module_names: list[str], wrap: Callable) -> Undo:
 
     Returns an undo list. If a later module can't be imported, everything already
     wrapped is unwound before the error propagates, so a bad target never leaves
-    functions patched. Methods are wrapped too (``self`` is captured as the first
-    argument); dunders, static/class methods, and inherited methods are left alone.
+    functions patched. Instance and static methods a class defines itself are wrapped
+    too (an instance method's ``self`` is captured as the first argument); dunders,
+    classmethods, properties, and inherited members are left alone.
     """
     undo: Undo = []
     try:

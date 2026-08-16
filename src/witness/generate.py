@@ -18,6 +18,7 @@ as a file that would fail to import.
 from __future__ import annotations
 
 import base64
+import keyword
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
@@ -106,9 +107,9 @@ def _render_value(enc: Encoded) -> tuple[str, bool]:
 
 
 def _assert_eq(accessor: str, expected: str) -> str:
-    """`is` for None/True/False (lint-clean), `==` otherwise."""
-    op = "is" if expected in ("None", "True", "False") else "=="
-    return f"assert {accessor} {op} {expected}"
+    """Always `==` — `witness check` compares with `==` too, so the emitted test and
+    the checker must use identical semantics (a stray `is` made them disagree)."""
+    return f"assert {accessor} == {expected}"
 
 
 def _render_boundary(boundary: dict[str, list[Encoded]]) -> tuple[str, bool]:
@@ -204,10 +205,20 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             src, helper = _render_value(enc)
             needs_helper |= helper
             call_parts.append(src)
+        # Emit kwargs as `key=val` only when every key is a valid identifier and not
+        # a keyword; otherwise pass them all via `**{...}` so the call stays valid
+        # Python (e.g. a kwarg literally named "class" or "weird-key").
+        clean_kwargs = all(k.isidentifier() and not keyword.iskeyword(k) for k in capsule.kwargs)
+        splat: list[str] = []
         for key, enc in capsule.kwargs.items():
             src, helper = _render_value(enc)
             needs_helper |= helper
-            call_parts.append(f"{key}={src}")
+            if clean_kwargs:
+                call_parts.append(f"{key}={src}")
+            else:
+                splat.append(f"{key!r}: {src}")
+        if splat:
+            call_parts.append("**{" + ", ".join(splat) + "}")
         call = f"_mod.{capsule.func}({', '.join(call_parts)})"
 
         # Wrap the call in replay context managers for any recorded seams/deps.

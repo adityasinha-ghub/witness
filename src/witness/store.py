@@ -22,8 +22,9 @@ from . import matcher as matcher_mod
 from .capsule import Capsule, PartialOutcome, RaiseOutcome, Refusal, ReturnOutcome
 from .value import Encoded
 
-# Bumped to 2 when the dependency-arg key algorithm changed to a canonical form.
-FORMAT_VERSION = 2
+# Bumped when the dependency-arg key algorithm changes (v2: canonical form;
+# v3: canonical recursion into object state).
+FORMAT_VERSION = 3
 
 
 @dataclass

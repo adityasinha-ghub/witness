@@ -30,3 +30,20 @@ def _lookup(keys):
 @witness.record
 def summarize(words):
     return _lookup(set(words))
+
+
+class Cfg:
+    """Holds a set — its hash-order must not leak into the dep key (finding #2)."""
+
+    def __init__(self, tags):
+        self.tags = set(tags)
+
+
+def _cfg_fetch(cfg):
+    _calls["n"] += 1
+    return {"count": len(cfg.tags)}
+
+
+@witness.record
+def summarize_cfg(tags):
+    return _cfg_fetch(Cfg(tags))  # a set nested inside a custom-object dep argument

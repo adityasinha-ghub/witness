@@ -127,9 +127,10 @@ def test_nested_record_with_seams_certifies(tmp_path):
     certified = {c.func for c in rec.capsules}
     assert "outer_calls_inner" in certified
     assert "inner_seam" in certified
-    # outer_calls_inner itself drew no seams
+    # The outer capsule records the inner call's seam draw transitively, so the
+    # emitted test / check (which run the whole outer call) replay it in order.
     outer = next(c for c in rec.capsules if c.func == "outer_calls_inner")
-    assert outer.boundary == {}
+    assert "random.random" in outer.boundary
 
 
 def test_certification_uses_multiple_samples(tmp_path):

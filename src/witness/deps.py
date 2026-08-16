@@ -24,29 +24,51 @@ import hashlib
 import importlib
 import pickle
 
+_MAX_DEPTH = 8
 
-def _canonical(obj: object) -> str:
+
+def _object_state(obj):
+    d = getattr(obj, "__dict__", None)
+    if isinstance(d, dict):
+        return dict(d)
+    slots = getattr(type(obj), "__slots__", None)
+    if slots is not None:
+        names = [slots] if isinstance(slots, str) else list(slots)
+        return {n: getattr(obj, n) for n in names if hasattr(obj, n)}
+    return None
+
+
+def _canonical(obj: object, depth: int = 0) -> str:
     """A process-stable, order-independent string form of an argument value.
 
-    Sets/frozensets and dict entries are sorted, so the key does not depend on
-    ``PYTHONHASHSEED`` (which would otherwise make a generated test compute a
-    different key than was recorded and fail on unchanged code). Arbitrary objects
-    fall back to a pickle hash, which is only as stable as their pickling.
+    Sets/frozensets and dict entries are sorted, and arbitrary objects are described
+    by their (recursively canonicalized) ``__dict__``/``__slots__`` state — so the
+    key never depends on ``PYTHONHASHSEED`` (which would make a generated test
+    compute a different key than was recorded and fail cross-process), even for a set
+    nested inside a custom object. Only opaque objects with no introspectable state
+    (rare C types, which almost never contain a Python set) fall back to a pickle
+    hash. Bounded depth also stops runaway recursion on cyclic arguments.
     """
     if obj is None or isinstance(obj, bool):
         return repr(obj)
     if isinstance(obj, (int, float, complex, str, bytes, bytearray)):
         return repr(obj)
+    if depth >= _MAX_DEPTH:
+        return "pickle:" + hashlib.sha256(pickle.dumps(obj)).hexdigest()
     if isinstance(obj, (list, tuple)):
-        return type(obj).__name__ + "(" + ",".join(_canonical(x) for x in obj) + ")"
+        return type(obj).__name__ + "(" + ",".join(_canonical(x, depth + 1) for x in obj) + ")"
     if isinstance(obj, (set, frozenset)):
-        return type(obj).__name__ + "{" + ",".join(sorted(_canonical(x) for x in obj)) + "}"
-    if isinstance(obj, dict):
         return (
-            "{"
-            + ",".join(sorted(_canonical(k) + ":" + _canonical(v) for k, v in obj.items()))
-            + "}"
+            type(obj).__name__ + "{" + ",".join(sorted(_canonical(x, depth + 1) for x in obj)) + "}"
         )
+    if isinstance(obj, dict):
+        items = sorted(
+            _canonical(k, depth + 1) + ":" + _canonical(v, depth + 1) for k, v in obj.items()
+        )
+        return "{" + ",".join(items) + "}"
+    state = _object_state(obj)
+    if state is not None:
+        return "obj:" + type(obj).__qualname__ + ":" + _canonical(state, depth + 1)
     return "pickle:" + hashlib.sha256(pickle.dumps(obj)).hexdigest()
 
 
@@ -84,18 +106,37 @@ DEP_HARNESS = (
     "import pickle as _pickle\n"
     "\n"
     "\n"
-    "def _canonical(obj):\n"
+    "def _object_state(obj):\n"
+    '    d = getattr(obj, "__dict__", None)\n'
+    "    if isinstance(d, dict):\n"
+    "        return dict(d)\n"
+    '    slots = getattr(type(obj), "__slots__", None)\n'
+    "    if slots is not None:\n"
+    "        names = [slots] if isinstance(slots, str) else list(slots)\n"
+    "        return {n: getattr(obj, n) for n in names if hasattr(obj, n)}\n"
+    "    return None\n"
+    "\n"
+    "\n"
+    "def _canonical(obj, depth=0):\n"
     "    if obj is None or isinstance(obj, bool):\n"
     "        return repr(obj)\n"
     "    if isinstance(obj, (int, float, complex, str, bytes, bytearray)):\n"
     "        return repr(obj)\n"
+    "    if depth >= 8:\n"
+    '        return "pickle:" + _hashlib.sha256(_pickle.dumps(obj)).hexdigest()\n'
     "    if isinstance(obj, (list, tuple)):\n"
-    '        return type(obj).__name__ + "(" + ",".join(_canonical(x) for x in obj) + ")"\n'
+    '        return type(obj).__name__ + "(" + '
+    '",".join(_canonical(x, depth + 1) for x in obj) + ")"\n'
     "    if isinstance(obj, (set, frozenset)):\n"
-    '        return type(obj).__name__ + "{" + ",".join(sorted(_canonical(x) for x in obj)) + "}"\n'
+    '        return type(obj).__name__ + "{" + ",".join('
+    'sorted(_canonical(x, depth + 1) for x in obj)) + "}"\n'
     "    if isinstance(obj, dict):\n"
-    '        return "{" + ",".join('
-    'sorted(_canonical(k) + ":" + _canonical(v) for k, v in obj.items())) + "}"\n'
+    "        items = sorted(_canonical(k, depth + 1) + "
+    '":" + _canonical(v, depth + 1) for k, v in obj.items())\n'
+    '        return "{" + ",".join(items) + "}"\n'
+    "    state = _object_state(obj)\n"
+    "    if state is not None:\n"
+    '        return "obj:" + type(obj).__qualname__ + ":" + _canonical(state, depth + 1)\n'
     '    return "pickle:" + _hashlib.sha256(_pickle.dumps(obj)).hexdigest()\n'
     "\n"
     "\n"

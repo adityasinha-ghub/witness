@@ -62,7 +62,12 @@ class Session:
                 return queue.pop(0)
             if not self._replaying and self._call_stack:
                 result = original(*args, **kwargs)
-                self._call_stack[-1].setdefault(name, []).append(result)
+                # Attribute the draw to EVERY active call, so an outer function's
+                # capsule includes the seams its callees drew (transitively) — the
+                # emitted test and `check` replay the outer call as a whole and see
+                # all of them, in order.
+                for frame in self._call_stack:
+                    frame.setdefault(name, []).append(result)
                 return result
             return original(*args, **kwargs)
 
@@ -92,7 +97,9 @@ class Session:
                     key = deps_mod.dep_key(args, kwargs)
                 except Exception:  # unkeyable args → not stored; replay will refuse
                     return result
-                self._dep_stack[-1].setdefault(name, {}).setdefault(key, []).append(result)
+                # Attribute to every active call (transitive), like seams.
+                for frame in self._dep_stack:
+                    frame.setdefault(name, {}).setdefault(key, []).append(result)
                 return result
             return original(*args, **kwargs)
 
@@ -137,18 +144,11 @@ def record(func: Callable) -> Callable:
             return func(*args, **kwargs)
         if session._replaying:
             # A nested @record call reached during certification's re-invoke: run it
-            # for real, and suspend the enclosing call's replay state so this call's
-            # own seam/dep draws aren't served/consumed from them (which would wrongly
-            # refuse a deterministic outer function that calls a seam-using inner one).
-            saved_seams = session._replay_queues
-            saved_deps = session._replay_deps
-            session._replay_queues = None
-            session._replay_deps = None
-            try:
-                return func(*args, **kwargs)
-            finally:
-                session._replay_queues = saved_seams
-                session._replay_deps = saved_deps
+            # for real (don't re-record), and DON'T suspend the enclosing call's
+            # replay state — its seam/dep draws are part of the outer capsule's
+            # recorded set (attributed transitively) and must be consumed from the
+            # same queues, exactly as the emitted test and `check` replay them.
+            return func(*args, **kwargs)
         try:
             arg_snapshot = [copy.deepcopy(a) for a in args]
             kwarg_snapshot = {k: copy.deepcopy(v) for k, v in kwargs.items()}

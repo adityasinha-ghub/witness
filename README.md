@@ -250,8 +250,9 @@ ordinary nondeterminism. It is honest about two things it can't fully catch yet:
   wrongly certified — as a whole return, or as a single "stable" field in volatility
   triage. More `samples` shrinks this fast (a coin flip drops from ~44% at 1 sample
   to ~1% at 5); covering the source as a seam eliminates it.
-- **Per-process cached values.** A value computed once at import (e.g. a module-level
-  `uuid4()`) always "reproduces" in-process, so a test can freeze it and then fail
+- **Once-per-process / lazy state.** A value fixed once per process — a module-level
+  `uuid4()` computed at import, a lazy-init/run-once path, a memoized result — always
+  "reproduces" during in-process re-invocation, so a test can freeze it and then fail
   in a fresh process. Catching this needs subprocess isolation (roadmap).
 
 So witness errs toward refusing, and its guarantee is "reproduced under these
@@ -317,7 +318,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 84 tests
+python -m pytest -q       # 90 tests
 ```
 
 ## License

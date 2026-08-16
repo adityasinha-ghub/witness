@@ -135,6 +135,44 @@ def pair(name):
 
 
 @witness.record
+def inner_clock(x):
+    time.time()  # a seam draw inside a callee
+    return x * 2
+
+
+@witness.record
+def outer_clock(x):
+    time.time()  # …and the caller draws one too (audit finding #1)
+    return inner_clock(x)
+
+
+@witness.record
+def kw_echo(**kw):
+    return sorted(kw.items())  # exercises weird kwarg names (audit finding #4)
+
+
+@witness.record
+def flagged(x):
+    _partial_n["i"] += 1
+    return {"ok": True, "seq": _partial_n["i"]}  # stable True + volatile (finding #3)
+
+
+def _make_local_error():
+    class LocalError(Exception):
+        pass
+
+    return LocalError
+
+
+LocalError = _make_local_error()  # a class whose __qualname__ has '<locals>'
+
+
+@witness.record
+def raise_local(x):
+    raise LocalError("nope")  # audit finding #5
+
+
+@witness.record
 def cyclic(name):
     # A self-referential return — triage must not recurse forever.
     _partial_n["i"] += 1
