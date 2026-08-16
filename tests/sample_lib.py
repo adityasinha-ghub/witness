@@ -141,3 +141,24 @@ def cyclic(name):
     d = {"name": name, "n": _partial_n["i"]}
     d["self"] = d
     return d
+
+
+@witness.record
+def Cart_total(x):
+    # Deliberately named so its test collides with Cart.total's sanitized name.
+    return x + 1
+
+
+class Cart:
+    """A small stateful class — its methods are captured via targets=[...]."""
+
+    def __init__(self, discount):
+        self.discount = discount
+        self.items = []
+
+    def add(self, price):
+        self.items.append(price)
+        return len(self.items)
+
+    def total(self):
+        return sum(self.items) * (1 - self.discount)

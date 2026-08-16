@@ -56,8 +56,8 @@ def generate(capsules: list[Capsule]) -> GenerateResult:
                 f"{capsule.func} (defined in __main__ — import it as a module to generate tests)"
             )
             continue
-        if "." in capsule.func:
-            skipped.append(f"{capsule.module}.{capsule.func} (method/nested/lambda)")
+        if "<locals>" in capsule.func:  # nested function / lambda (methods are fine)
+            skipped.append(f"{capsule.module}.{capsule.func} (nested/lambda)")
             continue
         by_module[capsule.module].append(capsule)
 
@@ -105,6 +105,12 @@ def _render_value(enc: Encoded) -> tuple[str, bool]:
     return f'_wv("{b64}")', True
 
 
+def _assert_eq(accessor: str, expected: str) -> str:
+    """`is` for None/True/False (lint-clean), `==` otherwise."""
+    op = "is" if expected in ("None", "True", "False") else "=="
+    return f"assert {accessor} {op} {expected}"
+
+
 def _render_boundary(boundary: dict[str, list[Encoded]]) -> tuple[str, bool]:
     """Render the recorded seam queues as a dict literal for the _Replay harness."""
     needs_helper = False
@@ -125,7 +131,7 @@ def _render_matcher(m, accessor: str) -> tuple[list[str], bool]:
         return [], False
     if isinstance(m, Exact):
         src, helper = _render_value(m.value)
-        return [f"assert {accessor} == {src}"], helper
+        return [_assert_eq(accessor, src)], helper
     if isinstance(m, OfType):
         return [f"assert type({accessor}).__name__ == {m.type_name!r}"], False
 
@@ -185,6 +191,7 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
     needs_deps = False
     skipped: list[str] = []
     exc_aliases: dict[str, str] = {}
+    used_names: set[str] = set()
 
     def alias_for(exc_module: str) -> str:
         if exc_module not in exc_aliases:
@@ -233,10 +240,19 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
         else:
             expected, helper = _render_value(capsule.outcome.value)
             needs_helper |= helper
-            asserts = [f"assert result == {expected}"]
+            asserts = [_assert_eq("result", expected)]
 
-        name = f"test_{capsule.func}_{counters[capsule.func]}"
+        # `Cls.method` → a valid test-function name, disambiguated so a method and a
+        # like-named top-level function can't collide (which would drop a test).
+        safe = capsule.func.replace(".", "_")
+        base = f"test_{safe}_{counters[capsule.func]}"
         counters[capsule.func] += 1
+        name = base
+        dup = 1
+        while name in used_names:
+            name = f"{base}_{dup}"
+            dup += 1
+        used_names.add(name)
         body.append(_render_test(name, withs, call, ref, asserts))
 
     if not body:

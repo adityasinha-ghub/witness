@@ -55,17 +55,18 @@ def check(recording) -> CheckResult:
 
 def _check_one(capsule: Capsule, result: CheckResult) -> None:
     qualified = f"{capsule.module}.{capsule.func}"
-    if capsule.module == "__main__" or "." in capsule.func:
+    if capsule.module == "__main__" or "<locals>" in capsule.func:
         result.uncheckable.append((qualified, "not importable (defined in __main__/nested)"))
         return
     try:
-        module = importlib.import_module(capsule.module)
-        func = getattr(module, capsule.func)
+        target: object = importlib.import_module(capsule.module)
+        for part in capsule.func.split("."):  # resolves Cls.method too
+            target = getattr(target, part)
     except (ImportError, AttributeError) as exc:
         result.uncheckable.append((qualified, f"not importable: {exc}"))
         return
     # Call the underlying function, not witness's own recording wrapper.
-    func = getattr(func, "__witness_wrapped__", func)
+    func = getattr(target, "__witness_wrapped__", target)
 
     # Reconstructing recorded values can fail across versions (a class was renamed
     # or removed) — that's a per-capsule "uncheckable", never a crash of the run.

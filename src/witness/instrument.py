@@ -22,10 +22,12 @@ Undo = list[tuple[object, str, object]]
 
 
 def wrap_module_functions(module_names: list[str], wrap: Callable) -> Undo:
-    """Wrap the top-level functions of each named module; return an undo list.
+    """Wrap the top-level functions (and class methods) of each named module.
 
-    If a later module can't be imported, everything already wrapped is unwound
-    before the error propagates, so a bad target never leaves functions patched.
+    Returns an undo list. If a later module can't be imported, everything already
+    wrapped is unwound before the error propagates, so a bad target never leaves
+    functions patched. Methods are wrapped too (``self`` is captured as the first
+    argument); dunders, static/class methods, and inherited methods are left alone.
     """
     undo: Undo = []
     try:
@@ -33,20 +35,42 @@ def wrap_module_functions(module_names: list[str], wrap: Callable) -> Undo:
             module = importlib.import_module(name)
             module_name = getattr(module, "__name__", None)
             for attr, obj in list(vars(module).items()):
-                if (
-                    isinstance(obj, types.FunctionType)
-                    and obj.__module__ == module_name  # defined here, not imported
-                    and attr == obj.__name__  # bound under its own name, not an alias
-                    and "." not in obj.__qualname__  # top-level (what witness emits)
-                    and not hasattr(obj, "__witness_wrapped__")  # not already wrapped
-                    and not hasattr(obj, "__witness_patched__")  # not a seam/dep wrapper
-                ):
+                if isinstance(obj, types.FunctionType) and _own_top_level(obj, module_name, attr):
                     setattr(module, attr, wrap(obj))
                     undo.append((module, attr, obj))
+                elif isinstance(obj, type) and obj.__module__ == module_name:
+                    _wrap_methods(obj, module_name, wrap, undo)
     except Exception:
         unwrap(undo)
         raise
     return undo
+
+
+def _own_top_level(obj, module_name, attr: str) -> bool:
+    return (
+        obj.__module__ == module_name  # defined here, not imported
+        and attr == obj.__name__  # bound under its own name, not an alias
+        and "." not in obj.__qualname__  # top-level (not nested/lambda)
+        and not hasattr(obj, "__witness_wrapped__")  # not already wrapped
+        and not hasattr(obj, "__witness_patched__")  # not a seam/dep wrapper
+    )
+
+
+def _wrap_methods(cls: type, module_name, wrap: Callable, undo: Undo) -> None:
+    """Wrap the instance methods a class defines itself (self becomes the 1st arg)."""
+    for attr, obj in list(vars(cls).items()):
+        # vars(cls) holds plain functions for instance methods; staticmethod /
+        # classmethod are descriptor objects (not FunctionType) and are skipped.
+        if (
+            isinstance(obj, types.FunctionType)
+            and obj.__module__ == module_name
+            and attr == obj.__name__
+            and not (attr.startswith("__") and attr.endswith("__"))  # skip dunders
+            and not hasattr(obj, "__witness_wrapped__")
+            and not hasattr(obj, "__witness_patched__")
+        ):
+            setattr(cls, attr, wrap(obj))
+            undo.append((cls, attr, obj))
 
 
 def unwrap(undo: Undo) -> None:
