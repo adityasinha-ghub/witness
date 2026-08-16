@@ -291,10 +291,10 @@ for the full vision and build order):
   perturb shared module/global state, affecting what a *later* call records — record
   pure/deterministic-ish functions for now.) Extending the boundary ledger to those
   dependencies (replayed as auto-mocks) is what will remove the double-execution.
-- **Auto-capture** covers a module's own top-level functions and instance methods
-  (called through the module). Static/class methods, nested functions, and functions
-  reached only via a bound-early reference aren't captured yet (a `sys.monitoring`
-  tracer would reach those).
+- **Auto-capture** covers a module's own top-level functions and instance/static
+  methods (called through the module). `classmethod`s, nested functions, and functions
+  reached only via a bound-early reference aren't captured yet (the last would need a
+  `sys.monitoring` tracer).
 - **Nested functions and lambdas** are reported as skipped, not mis-emitted.
 - Property mining, production capture, languages other than Python.
 
@@ -307,8 +307,8 @@ for the full vision and build order):
 - [x] **Schema fingerprinting** — `witness check` flags type/shape drift (`float` → `int`) the `==` diff can't see
 - [x] **Dependency ledger** — record & replay declared dependency functions by argument (`recording(deps=...)`)
 - [x] **Volatility triage** — certify the stable structure of a partly-volatile return (recursive: nested dicts + lists)
-- [x] **Method capture** — auto-instrument instance methods (`self` recorded as the first arg)
-- [ ] Filesystem deps, a `sys.monitoring` tracer for static/class methods + locally-bound calls
+- [x] **Method capture** — auto-instrument instance methods (`self` recorded as the first arg) and static methods
+- [ ] Filesystem deps, classmethods, a `sys.monitoring` tracer for locally-bound calls
 - [ ] **Cross-version replay-diff** — re-feed recordings into new code; "approve these 3 behavior changes" in PR review
 - [ ] **`sys.monitoring` auto-capture** — net a whole module without decorators
 - [ ] Corpus distillation, negative-space coverage map, observed-invariant mining
@@ -317,7 +317,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 83 tests
+python -m pytest -q       # 84 tests
 ```
 
 ## License

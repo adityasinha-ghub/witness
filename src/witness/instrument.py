@@ -57,19 +57,31 @@ def _own_top_level(obj, module_name, attr: str) -> bool:
 
 
 def _wrap_methods(cls: type, module_name, wrap: Callable, undo: Undo) -> None:
-    """Wrap the instance methods a class defines itself (self becomes the 1st arg)."""
+    """Wrap the instance and static methods a class defines itself.
+
+    Instance methods capture ``self`` as the first argument. Static methods have no
+    receiver, so they behave exactly like a top-level function under ``Cls.name``.
+    ``classmethod`` is left alone (its auto-bound ``cls`` would need special call-
+    site handling); dunders, properties, and inherited members are skipped.
+    """
     for attr, obj in list(vars(cls).items()):
-        # vars(cls) holds plain functions for instance methods; staticmethod /
-        # classmethod are descriptor objects (not FunctionType) and are skipped.
+        if isinstance(obj, types.FunctionType):  # instance method
+            func = obj
+            rewrap = wrap
+        elif isinstance(obj, staticmethod):  # static method
+            func = obj.__func__
+            rewrap = lambda f: staticmethod(wrap(f))  # noqa: E731
+        else:
+            continue  # classmethod / property / other descriptors → skip
         if (
-            isinstance(obj, types.FunctionType)
-            and obj.__module__ == module_name
-            and attr == obj.__name__
+            isinstance(func, types.FunctionType)
+            and func.__module__ == module_name
+            and attr == func.__name__
             and not (attr.startswith("__") and attr.endswith("__"))  # skip dunders
-            and not hasattr(obj, "__witness_wrapped__")
-            and not hasattr(obj, "__witness_patched__")
+            and not hasattr(func, "__witness_wrapped__")
+            and not hasattr(func, "__witness_patched__")
         ):
-            setattr(cls, attr, wrap(obj))
+            setattr(cls, attr, rewrap(func))
             undo.append((cls, attr, obj))
 
 

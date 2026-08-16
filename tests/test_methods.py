@@ -70,6 +70,22 @@ def test_method_and_function_test_names_do_not_collide(tmp_path):
     compile(src, "t.py", "exec")
 
 
+def test_static_methods_are_captured(tmp_path):
+    wdir = str(tmp_path / ".witness")
+    with witness.recording(wdir, targets=["sample_lib"]):
+        assert sample_lib.Cart.apply_tax(100, 0.08) == 108.0
+    rec = store.load(wdir)
+    cap = next(c for c in rec.capsules if c.func == "Cart.apply_tax")
+    assert [a.literal for a in cap.args] == ["100", "0.08"]  # no self/cls, just args
+    src = generate.generate(rec.capsules).files["test_witness_sample_lib.py"]
+    assert "_mod.Cart.apply_tax(100, 0.08)" in src
+    assert "assert result == 108.0" in src
+    ns: dict = {}
+    exec(compile(src, "t.py", "exec"), ns)  # noqa: S102
+    ns["test_Cart_apply_tax_0"]()  # runs against real Cart.apply_tax — must not raise
+    assert check.check(rec).changed == []
+
+
 def test_check_detects_method_change(tmp_path, monkeypatch):
     rec = _record_cart(tmp_path)
     # Change the discount math: total now ignores the discount.

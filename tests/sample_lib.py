@@ -162,3 +162,7 @@ class Cart:
 
     def total(self):
         return sum(self.items) * (1 - self.discount)
+
+    @staticmethod
+    def apply_tax(amount, rate):
+        return round(amount * (1 + rate), 2)
