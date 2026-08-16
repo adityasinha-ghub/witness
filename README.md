@@ -25,6 +25,11 @@ That's the difference from the neighbors: EvoSuite/Randoop (randomized), Hypothe
 (you write the strategies), and "AI writes your tests" (nondeterministic, and it
 hallucinates). witness only ever writes down what really happened.
 
+Validated on real (non-toy) code: pointed at stdlib `textwrap`, `statistics`,
+`urllib.parse`, and `base64`, it records their functions *and* class methods and
+emits tests that pass — and a CI guard keeps dogfooding `textwrap` on every run. See
+[`examples/realworld.py`](examples/).
+
 ## Quick start
 
 ```python
@@ -312,7 +317,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 81 tests
+python -m pytest -q       # 83 tests
 ```
 
 ## License
