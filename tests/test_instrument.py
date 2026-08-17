@@ -57,6 +57,30 @@ def test_bad_target_does_not_corrupt_state(tmp_path):
     assert any(c.func == "double" for c in rec.capsules)
 
 
+def test_target_package_captures_reexported_api(tmp_path, monkeypatch):
+    # The common package pattern: a function defined in a submodule and re-exported
+    # from __init__. `--target <package>` must capture it (attributed to its defining
+    # submodule), but must NOT capture a function imported from a different library.
+    import importlib
+
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "core.py").write_text("def do(x):\n    return x * 2\n")
+    (pkg / "__init__.py").write_text("from .core import do\nfrom math import sqrt\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    mypkg = importlib.import_module("mypkg")
+
+    wdir = str(tmp_path / ".witness")
+    with witness.recording(wdir, targets=["mypkg"]):
+        assert mypkg.do(21) == 42
+        mypkg.sqrt(16)  # foreign import — must not be captured
+    rec = store.load(wdir)
+    do = [c for c in rec.capsules if c.func == "do"]
+    assert do  # the package's own re-exported API is captured…
+    assert do[0].module == "mypkg.core"  # …attributed to its defining submodule
+    assert not any(c.func == "sqrt" for c in rec.capsules)  # …but not `math.sqrt`
+
+
 def test_functions_restored_after_recording(tmp_path):
     original = target_lib.double
     with witness.recording(str(tmp_path / ".witness"), targets=["target_lib"]):

@@ -39,7 +39,7 @@ def wrap_module_functions(module_names: list[str], wrap: Callable) -> Undo:
                 if isinstance(obj, types.FunctionType) and _own_top_level(obj, module_name, attr):
                     setattr(module, attr, wrap(obj))
                     undo.append((module, attr, obj))
-                elif isinstance(obj, type) and obj.__module__ == module_name:
+                elif isinstance(obj, type) and _defined_within(obj, module_name):
                     _wrap_methods(obj, module_name, wrap, undo)
     except Exception:
         unwrap(undo)
@@ -47,9 +47,17 @@ def wrap_module_functions(module_names: list[str], wrap: Callable) -> Undo:
     return undo
 
 
+def _defined_within(obj, module_name) -> bool:
+    """True if ``obj`` is defined in ``module_name`` OR one of its submodules — so
+    targeting a package captures its own API (re-exported from submodules), but not
+    functions/classes it merely imported from a *different* library."""
+    m = getattr(obj, "__module__", None)
+    return bool(m) and bool(module_name) and (m == module_name or m.startswith(module_name + "."))
+
+
 def _own_top_level(obj, module_name, attr: str) -> bool:
     return (
-        obj.__module__ == module_name  # defined here, not imported
+        _defined_within(obj, module_name)  # defined here or in a submodule, not imported
         and attr == obj.__name__  # bound under its own name, not an alias
         and "." not in obj.__qualname__  # top-level (not nested/lambda)
         and not hasattr(obj, "__witness_wrapped__")  # not already wrapped
@@ -76,7 +84,7 @@ def _wrap_methods(cls: type, module_name, wrap: Callable, undo: Undo) -> None:
             continue  # classmethod / property / other descriptors → skip
         if (
             isinstance(func, types.FunctionType)
-            and func.__module__ == module_name
+            and _defined_within(func, module_name)
             and attr == func.__name__
             and not (attr.startswith("__") and attr.endswith("__"))  # skip dunders
             and not hasattr(func, "__witness_wrapped__")
