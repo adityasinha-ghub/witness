@@ -259,6 +259,10 @@ So witness errs toward refusing, and its guarantee is "reproduced under these
 checks" — strong in practice, not a proof against every hidden input. Running the
 generated tests once in CI is the final ground truth.
 
+As a last line of defense, every emitted file is `ast.parse`-checked before it's
+written: a capsule witness can't render as valid Python is dropped with a reason,
+never shipped as an uncollectable test.
+
 ## How it works
 
 1. **Snapshot at entry.** When a recorded function is called, witness deep-copies
@@ -318,7 +322,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 90 tests
+python -m pytest -q       # 91 tests
 ```
 
 ## License

@@ -17,6 +17,7 @@ as a file that would fail to import.
 
 from __future__ import annotations
 
+import ast
 import base64
 import keyword
 from collections import Counter, defaultdict
@@ -264,7 +265,18 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
             name = f"{base}_{dup}"
             dup += 1
         used_names.add(name)
-        body.append(_render_test(name, withs, call, ref, asserts))
+        test_src = _render_test(name, withs, call, ref, asserts)
+        # Never ship a test that isn't even valid Python: drop the capsule with a
+        # reason rather than poison the whole file. (Defense in depth — the known
+        # shapes are handled above; this catches any future emission bug.)
+        try:
+            ast.parse(test_src)
+        except SyntaxError as exc:
+            skipped.append(
+                f"{module}.{capsule.func} (emitted test was not valid Python: {exc.msg})"
+            )
+            continue
+        body.append(test_src)
 
     if not body:
         return "", 0, skipped
@@ -291,6 +303,13 @@ def _render_module(module: str, caps: list[Capsule]) -> tuple[str, int, list[str
         blocks.append(DEP_HARNESS.rstrip())
     blocks.extend(b.rstrip() for b in body)
     source = "\n\n\n".join(blocks).rstrip() + "\n"
+    try:
+        ast.parse(source)  # final guard: every emitted file must parse
+    except SyntaxError as exc:
+        # Each test parsed individually, so a whole-file failure means the assembled
+        # imports/harness are the problem — a witness bug. Drop the file rather than
+        # ship something uncollectable, and surface it.
+        return "", 0, [*skipped, f"{module} (internal: emitted file did not parse: {exc.msg})"]
     return source, len(body), skipped
 
 
