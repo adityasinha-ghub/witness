@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -126,6 +127,13 @@ def _status(recording_dir: str) -> int:
 
 
 def _check(recording_dir: str, strict: bool = False) -> int:
+    # `check` re-imports the project's modules, so make the current directory
+    # importable — the installed `witness` console script doesn't add cwd to sys.path
+    # the way `python -m` does, so `witness check` from a project root would otherwise
+    # fail to import that project's own modules.
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
     recording = store.load(recording_dir)
     result = check_mod.check(recording)
     total = result.unchanged + len(result.changed) + len(result.drifted)

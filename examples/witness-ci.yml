@@ -1,0 +1,27 @@
+# Example: use witness as a behavioral regression gate in YOUR repo's CI.
+# Copy this to .github/workflows/witness.yml.
+#
+# One-time setup, done locally, then committed:
+#   pip install "git+https://github.com/adityasinha-ghub/witness"
+#   witness run --target yourpackage your_realistic_script.py   # record a real run
+#   git add -f .witness && git commit -m "witness: baseline recording"
+#
+# From then on, every PR fails if any recorded behavior changes (with a before→after
+# diff), and passes when nothing observable moved.
+
+name: behavior check
+on: [pull_request]
+
+jobs:
+  witness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . # install your package so witness can import it
+      - uses: adityasinha-ghub/witness@main
+        with:
+          dir: .witness
+          # strict: "true"   # also fail on type/shape drift (e.g. float -> int)

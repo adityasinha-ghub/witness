@@ -131,6 +131,30 @@ $ witness check
 Drift doesn't fail the gate by default (the `==` tests still pass, so calling it a
 failure would contradict them); pass `--strict` to treat drift as a failure too.
 
+### As a CI gate (GitHub Action)
+
+Record a baseline once, commit it, and let every PR be checked against it:
+
+```yaml
+# .github/workflows/witness.yml
+on: [pull_request]
+jobs:
+  witness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e .        # install your package so witness can import it
+      - uses: adityasinha-ghub/witness@main
+        with:
+          dir: .witness             # your committed recording
+```
+
+The one-time setup (locally): `witness run --target yourpkg script.py`, then
+`git add -f .witness && git commit`. From then on the job fails with a before→after
+diff whenever observed behavior changes. See [`examples/witness-ci.yml`](examples/witness-ci.yml).
+
 ## What "refused" means (and why it's the point)
 
 witness would rather write nothing than write a lie. If a function is
@@ -324,7 +348,7 @@ for the full vision and build order):
 
 ```console
 pip install -e .          # or just use PYTHONPATH=src
-python -m pytest -q       # 92 tests
+python -m pytest -q       # 93 tests
 ```
 
 ## License

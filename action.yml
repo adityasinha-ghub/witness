@@ -1,0 +1,35 @@
+name: "witness check"
+description: "Fail the build when observed behavior changed, using a committed witness recording."
+branding:
+  icon: "eye"
+  color: "purple"
+
+inputs:
+  dir:
+    description: "Directory of the committed witness recording."
+    required: false
+    default: ".witness"
+  strict:
+    description: "Also fail on type/shape drift (true/false)."
+    required: false
+    default: "false"
+  python-version:
+    description: "Python version to run the check with."
+    required: false
+    default: "3.x"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install witness
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+    - name: witness check
+      shell: bash
+      run: |
+        args=(check --dir "${{ inputs.dir }}")
+        [ "${{ inputs.strict }}" = "true" ] && args+=(--strict)
+        witness "${args[@]}"
